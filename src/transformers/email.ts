@@ -16,7 +16,7 @@ interface JMAPEmailAddress {
  * JMAP Attachment structure.
  */
 interface JMAPAttachment {
-  blobId: string;
+  blobId: string | null;
   type: string;
   name: string | null;
   size: number;
@@ -26,7 +26,7 @@ interface JMAPAttachment {
  * JMAP body part reference.
  */
 interface JMAPBodyPart {
-  partId: string;
+  partId: string | null;
   type: string;
 }
 
@@ -50,11 +50,11 @@ interface JMAPEmail {
   keywords?: Record<string, boolean>;
   receivedAt: string;
   subject: string | null;
-  from: JMAPEmailAddress[];
-  to: JMAPEmailAddress[];
-  cc?: JMAPEmailAddress[];
-  bcc?: JMAPEmailAddress[];
-  replyTo?: JMAPEmailAddress[];
+  from: JMAPEmailAddress[] | null;
+  to: JMAPEmailAddress[] | null;
+  cc?: JMAPEmailAddress[] | null;
+  bcc?: JMAPEmailAddress[] | null;
+  replyTo?: JMAPEmailAddress[] | null;
   preview?: string;
   size?: number;
   hasAttachment?: boolean;
@@ -91,7 +91,7 @@ function hasKeyword(keywords: Record<string, boolean> | undefined, keyword: stri
  * @param addresses JMAP email addresses
  * @returns EmailAddress array
  */
-function transformAddresses(addresses: JMAPEmailAddress[] | undefined): EmailAddress[] {
+function transformAddresses(addresses: JMAPEmailAddress[] | null | undefined): EmailAddress[] {
   if (!addresses) {
     return [];
   }
@@ -116,7 +116,7 @@ function extractBodyContent(
   }
   // Use first body part
   const firstPart = bodyParts[0];
-  const value = bodyValues[firstPart.partId];
+  const value = bodyValues[firstPart.partId ?? ''];
   return value?.value;
 }
 
@@ -132,7 +132,7 @@ function transformAttachments(
     return undefined;
   }
   return attachments.map((att) => ({
-    blobId: att.blobId,
+    blobId: att.blobId as string,
     type: att.type,
     name: att.name,
     size: att.size,

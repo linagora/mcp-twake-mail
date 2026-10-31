@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { registerEmailOperationTools } from './email-operations.js';
-import type { JMAPClient } from '../../jmap/client.js';
+import { createFakeJmap, type FakeJmap } from '../../testing/fake-jmap.js';
 import type { Logger } from '../../config/logger.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { setApprover } from '../approval.js';
@@ -17,11 +17,11 @@ type ToolHandler = (args: Record<string, unknown>) => Promise<{
 
 describe('registerEmailOperationTools', () => {
   let mockServer: McpServer;
-  let mockJmapClient: JMAPClient;
+  let mockJmapClient: FakeJmap;
   let mockLogger: Logger;
   let registeredTools: Map<string, ToolHandler>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     registeredTools = new Map();
 
     // Mock MCP server
@@ -32,11 +32,7 @@ describe('registerEmailOperationTools', () => {
     } as unknown as McpServer;
 
     // Mock JMAP client
-    mockJmapClient = {
-      getSession: vi.fn(() => ({ accountId: 'account-1', apiUrl: 'https://jmap.example.com/api' })),
-      request: vi.fn(),
-      parseMethodResponse: vi.fn(),
-    } as unknown as JMAPClient;
+    mockJmapClient = await createFakeJmap();
 
     // Mock logger (silent)
     mockLogger = {
@@ -48,7 +44,7 @@ describe('registerEmailOperationTools', () => {
 
     // Register all tools
     setApprover(mockServer, { mode: 'client', language: 'en', timeoutMs: 1000 });
-    registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
+    registerEmailOperationTools(mockServer, mockJmapClient.client, mockLogger);
   });
 
   describe('mark_as_read', () => {
@@ -57,10 +53,6 @@ describe('registerEmailOperationTools', () => {
         methodResponses: [
           ['Email/set', { accountId: 'account-1', updated: { 'email-1': null } }, 'markRead'],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: { accountId: 'account-1', updated: { 'email-1': null } },
       });
 
       const handler = registeredTools.get('mark_as_read')!;
@@ -80,10 +72,6 @@ describe('registerEmailOperationTools', () => {
           ['Email/set', { accountId: 'account-1', notUpdated: { 'email-1': { type: 'notFound' } } }, 'markRead'],
         ],
       });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: { accountId: 'account-1', notUpdated: { 'email-1': { type: 'notFound' } } },
-      });
 
       const handler = registeredTools.get('mark_as_read')!;
       const result = await handler({ emailId: 'email-1' });
@@ -99,10 +87,6 @@ describe('registerEmailOperationTools', () => {
         methodResponses: [
           ['Email/set', { accountId: 'account-1', updated: { 'email-1': null } }, 'markUnread'],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: { accountId: 'account-1', updated: { 'email-1': null } },
       });
 
       const handler = registeredTools.get('mark_as_unread')!;
@@ -121,10 +105,6 @@ describe('registerEmailOperationTools', () => {
         methodResponses: [
           ['Email/set', { accountId: 'account-1', notUpdated: { 'email-1': { type: 'notFound' } } }, 'markUnread'],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: { accountId: 'account-1', notUpdated: { 'email-1': { type: 'notFound' } } },
       });
 
       const handler = registeredTools.get('mark_as_unread')!;
@@ -148,12 +128,6 @@ describe('registerEmailOperationTools', () => {
             ['Email/set', { accountId: 'account-1', updated: { 'email-1': null } }, 'moveToTrash'],
           ],
         });
-      vi.mocked(mockJmapClient.parseMethodResponse)
-        .mockReturnValueOnce({ success: true, data: { ids: ['trash-mailbox-id'] } })
-        .mockReturnValueOnce({
-          success: true,
-          data: { accountId: 'account-1', updated: { 'email-1': null } },
-        });
 
       const handler = registeredTools.get('delete_email')!;
       const result = await handler({ emailId: 'email-1', permanent: false });
@@ -171,10 +145,6 @@ describe('registerEmailOperationTools', () => {
         methodResponses: [
           ['Email/set', { accountId: 'account-1', destroyed: ['email-1'] }, 'destroyEmail'],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: { accountId: 'account-1', destroyed: ['email-1'] },
       });
 
       const handler = registeredTools.get('delete_email')!;
@@ -200,12 +170,6 @@ describe('registerEmailOperationTools', () => {
             ['Email/set', { accountId: 'account-1', destroyed: ['email-1'] }, 'destroyEmailFallback'],
           ],
         });
-      vi.mocked(mockJmapClient.parseMethodResponse)
-        .mockReturnValueOnce({ success: true, data: { ids: [] } })
-        .mockReturnValueOnce({
-          success: true,
-          data: { accountId: 'account-1', destroyed: ['email-1'] },
-        });
 
       const handler = registeredTools.get('delete_email')!;
       const result = await handler({ emailId: 'email-1', permanent: false });
@@ -225,10 +189,6 @@ describe('registerEmailOperationTools', () => {
         methodResponses: [
           ['Email/set', { accountId: 'account-1', updated: { 'email-1': null } }, 'moveEmail'],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: { accountId: 'account-1', updated: { 'email-1': null } },
       });
 
       const handler = registeredTools.get('move_email')!;
@@ -255,13 +215,6 @@ describe('registerEmailOperationTools', () => {
           ],
         ],
       });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: {
-          accountId: 'account-1',
-          notUpdated: { 'email-1': { type: 'notFound', description: 'Email not found' } },
-        },
-      });
 
       const handler = registeredTools.get('move_email')!;
       const result = await handler({ emailId: 'email-1', targetMailboxId: 'archive-mailbox' });
@@ -277,10 +230,6 @@ describe('registerEmailOperationTools', () => {
         methodResponses: [
           ['Email/set', { accountId: 'account-1', updated: { 'email-1': null } }, 'addLabel'],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: { accountId: 'account-1', updated: { 'email-1': null } },
       });
 
       const handler = registeredTools.get('add_label')!;
@@ -307,13 +256,6 @@ describe('registerEmailOperationTools', () => {
           ],
         ],
       });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: {
-          accountId: 'account-1',
-          notUpdated: { 'email-1': { type: 'invalidProperties' } },
-        },
-      });
 
       const handler = registeredTools.get('add_label')!;
       const result = await handler({ emailId: 'email-1', mailboxId: 'invalid-mailbox' });
@@ -329,10 +271,6 @@ describe('registerEmailOperationTools', () => {
         methodResponses: [
           ['Email/set', { accountId: 'account-1', updated: { 'email-1': null } }, 'removeLabel'],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: { accountId: 'account-1', updated: { 'email-1': null } },
       });
 
       const handler = registeredTools.get('remove_label')!;
@@ -363,18 +301,6 @@ describe('registerEmailOperationTools', () => {
             'removeLabel',
           ],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: {
-          accountId: 'account-1',
-          notUpdated: {
-            'email-1': {
-              type: 'invalidProperties',
-              description: 'mailboxIds must contain at least one entry',
-            },
-          },
-        },
       });
 
       const handler = registeredTools.get('remove_label')!;
@@ -413,18 +339,6 @@ describe('registerEmailOperationTools', () => {
             ],
           ],
         });
-      vi.mocked(mockJmapClient.parseMethodResponse)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'drafts-mailbox-id', role: 'drafts' }] } })
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity-1', email: 'test@example.com', name: 'Test User' }] } })
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            accountId: 'account-1',
-            created: {
-              draft: { id: 'draft-email-123', blobId: 'blob-1', threadId: 'thread-1' },
-            },
-          },
-        });
 
       const handler = registeredTools.get('create_draft')!;
       const result = await handler({
@@ -445,8 +359,6 @@ describe('registerEmailOperationTools', () => {
       vi.mocked(mockJmapClient.request).mockResolvedValueOnce({
         methodResponses: [['Mailbox/get', { list: [{ id: 'inbox-id', role: 'inbox' }] }, 'getMailboxes']],
       });
-      vi.mocked(mockJmapClient.parseMethodResponse)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'inbox-id', role: 'inbox' }] } });
 
       const handler = registeredTools.get('create_draft')!;
       const result = await handler({
@@ -479,18 +391,6 @@ describe('registerEmailOperationTools', () => {
               'createDraft',
             ],
           ],
-        });
-      vi.mocked(mockJmapClient.parseMethodResponse)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'drafts-mailbox-id', role: 'drafts' }] } })
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity-1', email: 'test@example.com' }] } })
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            accountId: 'account-1',
-            notCreated: {
-              draft: { type: 'invalidProperties', description: 'Invalid email format' },
-            },
-          },
         });
 
       const handler = registeredTools.get('create_draft')!;

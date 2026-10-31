@@ -4,7 +4,7 @@
  */
 import { loadConfig } from '../../config/schema.js';
 import { createLogger } from '../../config/logger.js';
-import { JMAPClient } from '../../jmap/client.js';
+import { createJmapClient, loadAccountId } from '../../jmap/client.js';
 
 interface CheckResult {
   name: string;
@@ -85,13 +85,11 @@ async function checkConnection(): Promise<CheckResult> {
   try {
     const config = loadConfig();
     const logger = createLogger('error');
-    const client = new JMAPClient(config, logger);
-
-    const session = await client.fetchSession();
+    const accountId = await loadAccountId(createJmapClient(config, logger), logger);
     return {
       name: 'Connection',
       status: 'ok',
-      message: `Connected (Account: ${session.accountId})`,
+      message: `Connected (Account: ${accountId})`,
     };
   } catch (error) {
     return {

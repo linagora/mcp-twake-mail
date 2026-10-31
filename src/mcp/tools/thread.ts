@@ -5,7 +5,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
-import type { JMAPClient } from '../../jmap/client.js';
+import type { JmapClient } from 'jmap-client-ts';
 import type { Logger } from '../../config/logger.js';
 import { transformEmail } from '../../transformers/email.js';
 
@@ -43,7 +43,7 @@ const FULL_EMAIL_PROPERTIES = [
   'textBody',
   'htmlBody',
   'attachments',
-];
+] as const;
 
 /**
  * Register thread MCP tools with the server.
@@ -53,7 +53,7 @@ const FULL_EMAIL_PROPERTIES = [
  */
 export function registerThreadTools(
   server: McpServer,
-  jmapClient: JMAPClient,
+  jmapClient: JmapClient,
   logger: Logger
 ): void {
   // get_thread - retrieve thread by ID (THREAD-01)
@@ -71,34 +71,26 @@ export function registerThreadTools(
       logger.debug({ threadId }, 'get_thread called');
 
       try {
-        const session = jmapClient.getSession();
-        const response = await jmapClient.request([
-          [
-            'Thread/get',
-            {
-              accountId: session.accountId,
-              ids: [threadId],
-            },
-            'getThread',
-          ],
+        const accountId = jmapClient.getPrimaryAccountId();
+        const [result] = await jmapClient.requestSettled((b) => [
+          b.call('Thread/get', { accountId, ids: [threadId] }),
         ]);
 
-        const result = jmapClient.parseMethodResponse(response.methodResponses[0]);
-        if (!result.success) {
+        if (!result.ok) {
           logger.error({ error: result.error, threadId }, 'JMAP error in get_thread');
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
-                text: `Failed to retrieve thread: ${result.error?.description || result.error?.type || 'Unknown error'}`,
+                text: `Failed to retrieve thread: ${result.error.description || result.error.type}`,
               },
             ],
           };
         }
 
-        const threads = result.data?.list as Array<{ id: string; emailIds: string[] }>;
-        const notFound = result.data?.notFound as string[] | undefined;
+        const threads = result.value.list;
+        const notFound = result.value.notFound;
 
         // Check if thread was not found
         if (notFound && notFound.includes(threadId)) {
@@ -173,36 +165,28 @@ export function registerThreadTools(
       logger.debug({ threadId }, 'get_thread_emails called');
 
       try {
-        const session = jmapClient.getSession();
+        const accountId = jmapClient.getPrimaryAccountId();
 
         // Step 1: Get thread to retrieve emailIds
-        const threadResponse = await jmapClient.request([
-          [
-            'Thread/get',
-            {
-              accountId: session.accountId,
-              ids: [threadId],
-            },
-            'getThread',
-          ],
+        const [threadResult] = await jmapClient.requestSettled((b) => [
+          b.call('Thread/get', { accountId, ids: [threadId] }),
         ]);
 
-        const threadResult = jmapClient.parseMethodResponse(threadResponse.methodResponses[0]);
-        if (!threadResult.success) {
+        if (!threadResult.ok) {
           logger.error({ error: threadResult.error, threadId }, 'JMAP error in get_thread_emails (Thread/get)');
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
-                text: `Failed to retrieve thread: ${threadResult.error?.description || threadResult.error?.type || 'Unknown error'}`,
+                text: `Failed to retrieve thread: ${threadResult.error.description || threadResult.error.type}`,
               },
             ],
           };
         }
 
-        const threads = threadResult.data?.list as Array<{ id: string; emailIds: string[] }>;
-        const notFound = threadResult.data?.notFound as string[] | undefined;
+        const threads = threadResult.value.list;
+        const notFound = threadResult.value.notFound;
 
         // Check if thread was not found
         if (notFound && notFound.includes(threadId)) {
@@ -253,50 +237,41 @@ export function registerThreadTools(
         }
 
         // Step 2: Get all emails in the thread
-        const emailResponse = await jmapClient.request([
-          [
-            'Email/get',
-            {
-              accountId: session.accountId,
-              ids: emailIds,
-              properties: FULL_EMAIL_PROPERTIES,
-              fetchTextBodyValues: true,
-              fetchHTMLBodyValues: true,
-              bodyProperties: ['partId', 'blobId', 'type', 'name', 'size'],
-            },
-            'getEmails',
-          ],
+        const [emailResult] = await jmapClient.requestSettled((b) => [
+          b.call('Email/get', {
+            accountId,
+            ids: emailIds,
+            properties: FULL_EMAIL_PROPERTIES,
+            fetchTextBodyValues: true,
+            fetchHTMLBodyValues: true,
+            bodyProperties: ['partId', 'blobId', 'type', 'name', 'size'],
+          }),
         ]);
 
-        const emailResult = jmapClient.parseMethodResponse(emailResponse.methodResponses[0]);
-        if (!emailResult.success) {
+        if (!emailResult.ok) {
           logger.error({ error: emailResult.error, threadId }, 'JMAP error in get_thread_emails (Email/get)');
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
-                text: `Failed to retrieve thread emails: ${emailResult.error?.description || emailResult.error?.type || 'Unknown error'}`,
+                text: `Failed to retrieve thread emails: ${emailResult.error.description || emailResult.error.type}`,
               },
             ],
           };
         }
 
-        const emails = (emailResult.data?.list as unknown[]) || [];
+        const emails = emailResult.value.list || [];
 
         // Transform emails and maintain order (emailIds from Thread/get is oldest-first per RFC 8621)
         // Create a map for quick lookup by ID
-        const emailMap = new Map<string, unknown>();
-        for (const email of emails) {
-          const emailObj = email as { id: string };
-          emailMap.set(emailObj.id, email);
-        }
+        const emailMap = new Map(emails.map((email) => [email.id, email]));
 
         // Preserve the order from emailIds (oldest-first)
         const orderedEmails = emailIds
           .map((id) => emailMap.get(id))
           .filter((email): email is NonNullable<typeof email> => email !== undefined)
-          .map((email) => transformEmail(email as Parameters<typeof transformEmail>[0]));
+          .map((email) => transformEmail(email));
 
         logger.debug({ threadId, emailCount: orderedEmails.length }, 'get_thread_emails success');
 

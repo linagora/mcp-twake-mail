@@ -60,10 +60,10 @@ function generateClaudeConfig(
 async function testConnection(env: Record<string, string>): Promise<{ success: boolean; error?: string }> {
   // Dynamically import to avoid loading JMAP client in CLI context unnecessarily
   try {
-    const { JMAPClient } = await import('../../jmap/client.js');
+    const { createJmapClient, loadAccountId } = await import('../../jmap/client.js');
     const { createLogger } = await import('../../config/logger.js');
 
-    // Build minimal config object for JMAPClient
+    // Build minimal config object for the JMAP client
     const config = {
       JMAP_SESSION_URL: env.JMAP_SESSION_URL,
       JMAP_AUTH_METHOD: env.JMAP_AUTH_METHOD as 'basic' | 'bearer' | 'oidc',
@@ -81,7 +81,7 @@ async function testConnection(env: Record<string, string>): Promise<{ success: b
     };
 
     const logger = createLogger('error');
-    const client = new JMAPClient(config, logger);
+    const client = createJmapClient(config, logger);
 
     // For OIDC, we need to run the auth flow first
     if (config.JMAP_AUTH_METHOD === 'oidc') {
@@ -96,8 +96,8 @@ async function testConnection(env: Record<string, string>): Promise<{ success: b
       console.log('Authentication successful!\n');
     }
 
-    const session = await client.fetchSession();
-    console.log(`Connected! Account ID: ${session.accountId}`);
+    const accountId = await loadAccountId(client, logger);
+    console.log(`Connected! Account ID: ${accountId}`);
     return { success: true };
   } catch (error) {
     return {

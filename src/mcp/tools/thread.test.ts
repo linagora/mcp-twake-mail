@@ -3,7 +3,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { registerThreadTools } from './thread.js';
-import type { JMAPClient } from '../../jmap/client.js';
+import { createFakeJmap, type FakeJmap } from '../../testing/fake-jmap.js';
 import type { Logger } from '../../config/logger.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
@@ -15,11 +15,11 @@ type ToolHandler = (args: Record<string, unknown>) => Promise<{
 
 describe('registerThreadTools', () => {
   let mockServer: McpServer;
-  let mockJmapClient: JMAPClient;
+  let mockJmapClient: FakeJmap;
   let mockLogger: Logger;
   let registeredTools: Map<string, ToolHandler>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     registeredTools = new Map();
 
     // Mock MCP server
@@ -30,11 +30,7 @@ describe('registerThreadTools', () => {
     } as unknown as McpServer;
 
     // Mock JMAP client
-    mockJmapClient = {
-      getSession: vi.fn(() => ({ accountId: 'account-1', apiUrl: 'https://jmap.example.com/api' })),
-      request: vi.fn(),
-      parseMethodResponse: vi.fn(),
-    } as unknown as JMAPClient;
+    mockJmapClient = await createFakeJmap();
 
     // Mock logger (silent)
     mockLogger = {
@@ -45,7 +41,7 @@ describe('registerThreadTools', () => {
     } as unknown as Logger;
 
     // Register all tools
-    registerThreadTools(mockServer, mockJmapClient, mockLogger);
+    registerThreadTools(mockServer, mockJmapClient.client, mockLogger);
   });
 
   describe('get_thread', () => {
@@ -62,14 +58,6 @@ describe('registerThreadTools', () => {
             'getThread',
           ],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: {
-          accountId: 'account-1',
-          list: [{ id: 'thread-1', emailIds: ['email-1', 'email-2', 'email-3'] }],
-          notFound: [],
-        },
       });
 
       const handler = registeredTools.get('get_thread')!;
@@ -93,10 +81,6 @@ describe('registerThreadTools', () => {
           ],
         ],
       });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: { accountId: 'account-1', list: [], notFound: ['thread-nonexistent'] },
-      });
 
       const handler = registeredTools.get('get_thread')!;
       const result = await handler({ threadId: 'thread-nonexistent' });
@@ -111,10 +95,6 @@ describe('registerThreadTools', () => {
           ['Thread/get', { accountId: 'account-1', list: [], notFound: [] }, 'getThread'],
         ],
       });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: { accountId: 'account-1', list: [], notFound: [] },
-      });
 
       const handler = registeredTools.get('get_thread')!;
       const result = await handler({ threadId: 'thread-missing' });
@@ -128,10 +108,6 @@ describe('registerThreadTools', () => {
         methodResponses: [
           ['error', { type: 'serverError', description: 'Internal server error' }, 'getThread'],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: false,
-        error: { type: 'serverError', description: 'Internal server error' },
       });
 
       const handler = registeredTools.get('get_thread')!;
@@ -204,19 +180,6 @@ describe('registerThreadTools', () => {
             ['Email/get', { accountId: 'account-1', list: mockEmails }, 'getEmails'],
           ],
         });
-      vi.mocked(mockJmapClient.parseMethodResponse)
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            accountId: 'account-1',
-            list: [{ id: 'thread-1', emailIds: ['email-1', 'email-2'] }],
-            notFound: [],
-          },
-        })
-        .mockReturnValueOnce({
-          success: true,
-          data: { accountId: 'account-1', list: mockEmails },
-        });
 
       const handler = registeredTools.get('get_thread_emails')!;
       const result = await handler({ threadId: 'thread-1' });
@@ -242,10 +205,6 @@ describe('registerThreadTools', () => {
           ],
         ],
       });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: { accountId: 'account-1', list: [], notFound: ['thread-nonexistent'] },
-      });
 
       const handler = registeredTools.get('get_thread_emails')!;
       const result = await handler({ threadId: 'thread-nonexistent' });
@@ -267,14 +226,6 @@ describe('registerThreadTools', () => {
             'getThread',
           ],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: {
-          accountId: 'account-1',
-          list: [{ id: 'thread-empty', emailIds: [] }],
-          notFound: [],
-        },
       });
 
       const handler = registeredTools.get('get_thread_emails')!;
@@ -345,19 +296,6 @@ describe('registerThreadTools', () => {
             ['Email/get', { accountId: 'account-1', list: mockEmails }, 'getEmails'],
           ],
         });
-      vi.mocked(mockJmapClient.parseMethodResponse)
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            accountId: 'account-1',
-            list: [{ id: 'thread-1', emailIds: ['email-1', 'email-2', 'email-3'] }],
-            notFound: [],
-          },
-        })
-        .mockReturnValueOnce({
-          success: true,
-          data: { accountId: 'account-1', list: mockEmails },
-        });
 
       const handler = registeredTools.get('get_thread_emails')!;
       const result = await handler({ threadId: 'thread-1' });
@@ -389,19 +327,6 @@ describe('registerThreadTools', () => {
           methodResponses: [
             ['error', { type: 'serverError', description: 'Email fetch failed' }, 'getEmails'],
           ],
-        });
-      vi.mocked(mockJmapClient.parseMethodResponse)
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            accountId: 'account-1',
-            list: [{ id: 'thread-1', emailIds: ['email-1'] }],
-            notFound: [],
-          },
-        })
-        .mockReturnValueOnce({
-          success: false,
-          error: { type: 'serverError', description: 'Email fetch failed' },
         });
 
       const handler = registeredTools.get('get_thread_emails')!;

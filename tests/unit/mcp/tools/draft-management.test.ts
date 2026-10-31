@@ -6,7 +6,7 @@ vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
 }));
 
 import { registerEmailOperationTools } from '../../../../src/mcp/tools/email-operations.js';
-import type { JMAPClient } from '../../../../src/jmap/client.js';
+import { createFakeJmap, type FakeJmap } from '../../../../src/testing/fake-jmap.js';
 import type { Logger } from '../../../../src/config/logger.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { setApprover } from '../../../../src/mcp/approval.js';
@@ -33,11 +33,11 @@ interface ToolRegistration {
 
 describe('Draft Management Tools', () => {
   let mockServer: McpServer;
-  let mockJmapClient: JMAPClient;
+  let mockJmapClient: FakeJmap;
   let mockLogger: Logger;
   let registeredTools: Map<string, ToolRegistration>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
 
     // Track tool registrations
@@ -56,12 +56,7 @@ describe('Draft Management Tools', () => {
     // these tests script every JMAP call: the client confirms (approval prompts are tested in tests/unit/mcp/approval.test.ts)
     setApprover(mockServer, { mode: 'client', language: 'en', timeoutMs: 1000 });
 
-    // Mock JMAPClient
-    mockJmapClient = {
-      getSession: vi.fn().mockReturnValue({ accountId: 'account1' }),
-      request: vi.fn(),
-      parseMethodResponse: vi.fn(),
-    } as unknown as JMAPClient;
+    mockJmapClient = await createFakeJmap('account1');
 
     // Mock Logger
     mockLogger = {
@@ -74,7 +69,7 @@ describe('Draft Management Tools', () => {
 
   describe('update_draft', () => {
     it('registers update_draft tool with correct metadata', () => {
-      registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailOperationTools(mockServer, mockJmapClient.client, mockLogger);
 
       expect(registeredTools.has('update_draft')).toBe(true);
       const tool = registeredTools.get('update_draft')!;
@@ -107,14 +102,11 @@ describe('Draft Management Tools', () => {
       vi.mocked(mockJmapClient.request)
         .mockResolvedValueOnce({ methodResponses: [['Email/get', { list: draft ? [draft] : [] }, 'getDraft']] })
         .mockResolvedValueOnce({ methodResponses: [['Email/set', setData, 'updateDraft']] });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockImplementation((r: any) =>
-        r[0] === 'error' ? { success: false, error: r[1] } : { success: true, data: r[1] }
-      );
     }
     const setCall = () => vi.mocked(mockJmapClient.request).mock.calls[1][0][0];
 
     it('replaces the draft with its new subject and body, keeping threading and attachments', async () => {
-      registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailOperationTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('update_draft')!;
       mockDraftThen({ created: { draft: { id: 'draft-2' } }, destroyed: ['draft-1'] });
 
@@ -138,7 +130,7 @@ describe('Draft Management Tools', () => {
     });
 
     it('updates draft recipients and keeps the body as it was', async () => {
-      registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailOperationTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('update_draft')!;
       mockDraftThen({ created: { draft: { id: 'draft-2' } }, destroyed: ['draft-1'] });
 
@@ -160,7 +152,7 @@ describe('Draft Management Tools', () => {
     });
 
     it('returns error when draft not found', async () => {
-      registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailOperationTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('update_draft')!;
       mockDraftThen({}, null);
 
@@ -172,7 +164,7 @@ describe('Draft Management Tools', () => {
     });
 
     it('refuses to rewrite an e-mail that is not a draft', async () => {
-      registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailOperationTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('update_draft')!;
       mockDraftThen({}, { ...DRAFT, keywords: { $seen: true } });
 
@@ -184,14 +176,11 @@ describe('Draft Management Tools', () => {
     });
 
     it('returns error when state mismatch occurs', async () => {
-      registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailOperationTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('update_draft')!;
       vi.mocked(mockJmapClient.request)
         .mockResolvedValueOnce({ methodResponses: [['Email/get', { list: [DRAFT] }, 'getDraft']] })
         .mockResolvedValueOnce({ methodResponses: [['error', { type: 'stateMismatch' }, 'updateDraft']] });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockImplementation((r: any) =>
-        r[0] === 'error' ? { success: false, error: r[1] } : { success: true, data: r[1] }
-      );
 
       const result = await tool.handler({ draftId: 'draft-1', subject: 'New Subject', ifInState: 'old-state' });
 
@@ -200,7 +189,7 @@ describe('Draft Management Tools', () => {
     });
 
     it('reports a draft the server could not create', async () => {
-      registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailOperationTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('update_draft')!;
       mockDraftThen({ notCreated: { draft: { type: 'invalidProperties', description: 'bad' } } });
 
@@ -211,7 +200,7 @@ describe('Draft Management Tools', () => {
     });
 
     it('returns error when no fields to update', async () => {
-      registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailOperationTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('update_draft')!;
 
       const result = await tool.handler({ draftId: 'draft-1' });
@@ -222,7 +211,7 @@ describe('Draft Management Tools', () => {
     });
 
     it('supports optional ifInState parameter', async () => {
-      registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailOperationTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('update_draft')!;
       mockDraftThen({ created: { draft: { id: 'draft-2' } }, destroyed: ['draft-1'] });
 
@@ -234,7 +223,7 @@ describe('Draft Management Tools', () => {
 
   describe('send_draft', () => {
     it('registers send_draft tool with correct metadata', () => {
-      registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailOperationTools(mockServer, mockJmapClient.client, mockLogger);
 
       expect(registeredTools.has('send_draft')).toBe(true);
       const tool = registeredTools.get('send_draft')!;
@@ -247,32 +236,21 @@ describe('Draft Management Tools', () => {
     });
 
     it('sends draft and moves to Sent folder', async () => {
-      registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailOperationTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('send_draft')!;
 
-      // Mock setup response (Identity/get, Mailbox/get)
-      const setupResponse = {
-        methodResponses: [
-          ['Identity/get', { list: [{ id: 'identity1', email: 'test@example.com' }] }, 'getIdentity'],
-          ['Mailbox/get', { list: [{ id: 'sent-1', role: 'sent' }, { id: 'drafts-1', role: 'drafts' }] }, 'getMailboxes'],
-        ],
-      };
-
-      // Mock send response (EmailSubmission/set)
-      const sendResponse = {
-        methodResponses: [
-          ['EmailSubmission/set', { created: { submission: { id: 'submission-1' } } }, 'submitDraft'],
-        ],
-      };
-
-      vi.mocked(mockJmapClient.request)
-        .mockResolvedValueOnce(setupResponse)
-        .mockResolvedValueOnce(sendResponse);
-
-      vi.mocked(mockJmapClient.parseMethodResponse)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', email: 'test@example.com' }] } })
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-1', role: 'sent' }, { id: 'drafts-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({ success: true, data: { created: { submission: { id: 'submission-1' } } } });
+      mockJmapClient.request
+        .mockResolvedValueOnce({
+          methodResponses: [
+            ['Identity/get', { list: [{ id: 'identity1', email: 'test@example.com' }] }, 'c0'],
+            ['Mailbox/get', { list: [{ id: 'sent-1', role: 'sent' }, { id: 'drafts-1', role: 'drafts' }] }, 'c1'],
+          ],
+        })
+        .mockResolvedValueOnce({
+          methodResponses: [
+            ['EmailSubmission/set', { created: { submission: { id: 'submission-1' } } }, 'c0'],
+          ],
+        });
 
       const result = await tool.handler({ draftId: 'draft-1' });
 
@@ -294,31 +272,21 @@ describe('Draft Management Tools', () => {
     });
 
     it('sends draft when Sent mailbox missing', async () => {
-      registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailOperationTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('send_draft')!;
 
-      // Mock setup response (Identity/get, Mailbox/get with no Sent)
-      const setupResponse = {
-        methodResponses: [
-          ['Identity/get', { list: [{ id: 'identity1', email: 'test@example.com' }] }, 'getIdentity'],
-          ['Mailbox/get', { list: [{ id: 'drafts-1', role: 'drafts' }] }, 'getMailboxes'],
-        ],
-      };
-
-      const sendResponse = {
-        methodResponses: [
-          ['EmailSubmission/set', { created: { submission: { id: 'submission-1' } } }, 'submitDraft'],
-        ],
-      };
-
-      vi.mocked(mockJmapClient.request)
-        .mockResolvedValueOnce(setupResponse)
-        .mockResolvedValueOnce(sendResponse);
-
-      vi.mocked(mockJmapClient.parseMethodResponse)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', email: 'test@example.com' }] } })
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'drafts-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({ success: true, data: { created: { submission: { id: 'submission-1' } } } });
+      mockJmapClient.request
+        .mockResolvedValueOnce({
+          methodResponses: [
+            ['Identity/get', { list: [{ id: 'identity1', email: 'test@example.com' }] }, 'c0'],
+            ['Mailbox/get', { list: [{ id: 'drafts-1', role: 'drafts' }] }, 'c1'],
+          ],
+        })
+        .mockResolvedValueOnce({
+          methodResponses: [
+            ['EmailSubmission/set', { created: { submission: { id: 'submission-1' } } }, 'c0'],
+          ],
+        });
 
       const result = await tool.handler({ draftId: 'draft-1' });
 
@@ -339,30 +307,21 @@ describe('Draft Management Tools', () => {
     });
 
     it('returns error for forbiddenFrom', async () => {
-      registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailOperationTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('send_draft')!;
 
-      const setupResponse = {
-        methodResponses: [
-          ['Identity/get', { list: [{ id: 'identity1', email: 'test@example.com' }] }, 'getIdentity'],
-          ['Mailbox/get', { list: [{ id: 'sent-1', role: 'sent' }, { id: 'drafts-1', role: 'drafts' }] }, 'getMailboxes'],
-        ],
-      };
-
-      const sendResponse = {
-        methodResponses: [
-          ['EmailSubmission/set', { notCreated: { submission: { type: 'forbiddenFrom' } } }, 'submitDraft'],
-        ],
-      };
-
-      vi.mocked(mockJmapClient.request)
-        .mockResolvedValueOnce(setupResponse)
-        .mockResolvedValueOnce(sendResponse);
-
-      vi.mocked(mockJmapClient.parseMethodResponse)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', email: 'test@example.com' }] } })
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-1', role: 'sent' }, { id: 'drafts-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({ success: true, data: { notCreated: { submission: { type: 'forbiddenFrom' } } } });
+      mockJmapClient.request
+        .mockResolvedValueOnce({
+          methodResponses: [
+            ['Identity/get', { list: [{ id: 'identity1', email: 'test@example.com' }] }, 'c0'],
+            ['Mailbox/get', { list: [{ id: 'sent-1', role: 'sent' }, { id: 'drafts-1', role: 'drafts' }] }, 'c1'],
+          ],
+        })
+        .mockResolvedValueOnce({
+          methodResponses: [
+            ['EmailSubmission/set', { notCreated: { submission: { type: 'forbiddenFrom' } } }, 'c0'],
+          ],
+        });
 
       const result = await tool.handler({ draftId: 'draft-1' });
 
@@ -371,30 +330,21 @@ describe('Draft Management Tools', () => {
     });
 
     it('returns error for invalidEmail', async () => {
-      registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailOperationTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('send_draft')!;
 
-      const setupResponse = {
-        methodResponses: [
-          ['Identity/get', { list: [{ id: 'identity1', email: 'test@example.com' }] }, 'getIdentity'],
-          ['Mailbox/get', { list: [{ id: 'sent-1', role: 'sent' }, { id: 'drafts-1', role: 'drafts' }] }, 'getMailboxes'],
-        ],
-      };
-
-      const sendResponse = {
-        methodResponses: [
-          ['EmailSubmission/set', { notCreated: { submission: { type: 'invalidEmail' } } }, 'submitDraft'],
-        ],
-      };
-
-      vi.mocked(mockJmapClient.request)
-        .mockResolvedValueOnce(setupResponse)
-        .mockResolvedValueOnce(sendResponse);
-
-      vi.mocked(mockJmapClient.parseMethodResponse)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', email: 'test@example.com' }] } })
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-1', role: 'sent' }, { id: 'drafts-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({ success: true, data: { notCreated: { submission: { type: 'invalidEmail' } } } });
+      mockJmapClient.request
+        .mockResolvedValueOnce({
+          methodResponses: [
+            ['Identity/get', { list: [{ id: 'identity1', email: 'test@example.com' }] }, 'c0'],
+            ['Mailbox/get', { list: [{ id: 'sent-1', role: 'sent' }, { id: 'drafts-1', role: 'drafts' }] }, 'c1'],
+          ],
+        })
+        .mockResolvedValueOnce({
+          methodResponses: [
+            ['EmailSubmission/set', { notCreated: { submission: { type: 'invalidEmail' } } }, 'c0'],
+          ],
+        });
 
       const result = await tool.handler({ draftId: 'draft-1' });
 
@@ -403,30 +353,21 @@ describe('Draft Management Tools', () => {
     });
 
     it('returns error for tooManyRecipients', async () => {
-      registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailOperationTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('send_draft')!;
 
-      const setupResponse = {
-        methodResponses: [
-          ['Identity/get', { list: [{ id: 'identity1', email: 'test@example.com' }] }, 'getIdentity'],
-          ['Mailbox/get', { list: [{ id: 'sent-1', role: 'sent' }, { id: 'drafts-1', role: 'drafts' }] }, 'getMailboxes'],
-        ],
-      };
-
-      const sendResponse = {
-        methodResponses: [
-          ['EmailSubmission/set', { notCreated: { submission: { type: 'tooManyRecipients' } } }, 'submitDraft'],
-        ],
-      };
-
-      vi.mocked(mockJmapClient.request)
-        .mockResolvedValueOnce(setupResponse)
-        .mockResolvedValueOnce(sendResponse);
-
-      vi.mocked(mockJmapClient.parseMethodResponse)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', email: 'test@example.com' }] } })
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-1', role: 'sent' }, { id: 'drafts-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({ success: true, data: { notCreated: { submission: { type: 'tooManyRecipients' } } } });
+      mockJmapClient.request
+        .mockResolvedValueOnce({
+          methodResponses: [
+            ['Identity/get', { list: [{ id: 'identity1', email: 'test@example.com' }] }, 'c0'],
+            ['Mailbox/get', { list: [{ id: 'sent-1', role: 'sent' }, { id: 'drafts-1', role: 'drafts' }] }, 'c1'],
+          ],
+        })
+        .mockResolvedValueOnce({
+          methodResponses: [
+            ['EmailSubmission/set', { notCreated: { submission: { type: 'tooManyRecipients' } } }, 'c0'],
+          ],
+        });
 
       const result = await tool.handler({ draftId: 'draft-1' });
 
@@ -435,20 +376,15 @@ describe('Draft Management Tools', () => {
     });
 
     it('returns error when no identity available', async () => {
-      registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailOperationTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('send_draft')!;
 
-      const setupResponse = {
+      mockJmapClient.request.mockResolvedValueOnce({
         methodResponses: [
-          ['Identity/get', { list: [] }, 'getIdentity'],
-          ['Mailbox/get', { list: [{ id: 'sent-1', role: 'sent' }, { id: 'drafts-1', role: 'drafts' }] }, 'getMailboxes'],
+          ['Identity/get', { list: [] }, 'c0'],
+          ['Mailbox/get', { list: [{ id: 'sent-1', role: 'sent' }, { id: 'drafts-1', role: 'drafts' }] }, 'c1'],
         ],
-      };
-
-      vi.mocked(mockJmapClient.request).mockResolvedValueOnce(setupResponse);
-      vi.mocked(mockJmapClient.parseMethodResponse)
-        .mockReturnValueOnce({ success: true, data: { list: [] } })
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-1', role: 'sent' }, { id: 'drafts-1', role: 'drafts' }] } });
+      });
 
       const result = await tool.handler({ draftId: 'draft-1' });
 
@@ -457,20 +393,15 @@ describe('Draft Management Tools', () => {
     });
 
     it('returns error when mailbox fetch fails', async () => {
-      registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailOperationTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('send_draft')!;
 
-      const setupResponse = {
+      mockJmapClient.request.mockResolvedValueOnce({
         methodResponses: [
-          ['Identity/get', { list: [{ id: 'identity1', email: 'test@example.com' }] }, 'getIdentity'],
-          ['error', { type: 'serverError' }, 'getMailboxes'],
+          ['Identity/get', { list: [{ id: 'identity1', email: 'test@example.com' }] }, 'c0'],
+          ['error', { type: 'serverError' }, 'c1'],
         ],
-      };
-
-      vi.mocked(mockJmapClient.request).mockResolvedValueOnce(setupResponse);
-      vi.mocked(mockJmapClient.parseMethodResponse)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', email: 'test@example.com' }] } })
-        .mockReturnValueOnce({ success: false, error: { type: 'serverError' } });
+      });
 
       const result = await tool.handler({ draftId: 'draft-1' });
 

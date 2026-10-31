@@ -5,11 +5,10 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
-import type { JMAPClient } from '../../jmap/client.js';
+import type { JmapClient } from 'jmap-client-ts';
 import type { Logger } from '../../config/logger.js';
 import { transformMailbox } from '../../transformers/mailbox.js';
 import type { SimplifiedMailbox } from '../../types/dto.js';
-import type { MailboxSetResponse } from '../../types/jmap.js';
 import { approverFor } from '../approval.js';
 
 /** Properties to fetch for mailbox operations */
@@ -25,7 +24,7 @@ const MAILBOX_PROPERTIES = [
   'unreadThreads',
   'myRights',
   'isSubscribed',
-];
+] as const;
 
 /** Common tool annotations for read-only mailbox operations */
 const MAILBOX_TOOL_ANNOTATIONS: ToolAnnotations = {
@@ -43,7 +42,7 @@ const MAILBOX_TOOL_ANNOTATIONS: ToolAnnotations = {
  */
 export function registerMailboxTools(
   server: McpServer,
-  jmapClient: JMAPClient,
+  jmapClient: JmapClient,
   logger: Logger
 ): void {
   // get_mailbox tool (MBOX-01)
@@ -61,36 +60,30 @@ export function registerMailboxTools(
       logger.debug({ mailboxId }, 'get_mailbox called');
 
       try {
-        const session = jmapClient.getSession();
-        const response = await jmapClient.request([
-          [
-            'Mailbox/get',
-            {
-              accountId: session.accountId,
-              ids: [mailboxId],
-              properties: MAILBOX_PROPERTIES,
-            },
-            'get-mailbox',
-          ],
+        const accountId = jmapClient.getPrimaryAccountId();
+        const [result] = await jmapClient.requestSettled((b) => [
+          b.call('Mailbox/get', {
+            accountId,
+            ids: [mailboxId],
+            properties: MAILBOX_PROPERTIES,
+          }),
         ]);
 
-        const result = jmapClient.parseMethodResponse(response.methodResponses[0]);
-
-        if (!result.success) {
+        if (!result.ok) {
           logger.error({ error: result.error }, 'JMAP error in get_mailbox');
           return {
             content: [
               {
                 type: 'text' as const,
-                text: `Error retrieving mailbox: ${result.error?.description || result.error?.type || 'Unknown error'}`,
+                text: `Error retrieving mailbox: ${result.error.description || result.error.type}`,
               },
             ],
             isError: true,
           };
         }
 
-        const list = result.data?.list as Record<string, unknown>[] | undefined;
-        const notFound = result.data?.notFound as string[] | undefined;
+        const list = result.value.list;
+        const notFound = result.value.notFound;
 
         if (notFound && notFound.includes(mailboxId)) {
           return {
@@ -116,7 +109,7 @@ export function registerMailboxTools(
           };
         }
 
-        const mailbox = transformMailbox(list[0] as unknown as Parameters<typeof transformMailbox>[0]);
+        const mailbox = transformMailbox(list[0]);
 
         logger.debug({ mailboxId: mailbox.id, name: mailbox.name }, 'get_mailbox success');
 
@@ -161,34 +154,28 @@ export function registerMailboxTools(
       logger.debug({ role }, 'list_mailboxes called');
 
       try {
-        const session = jmapClient.getSession();
-        const response = await jmapClient.request([
-          [
-            'Mailbox/get',
-            {
-              accountId: session.accountId,
-              properties: MAILBOX_PROPERTIES,
-            },
-            'list-mailboxes',
-          ],
+        const accountId = jmapClient.getPrimaryAccountId();
+        const [result] = await jmapClient.requestSettled((b) => [
+          b.call('Mailbox/get', {
+            accountId,
+            properties: MAILBOX_PROPERTIES,
+          }),
         ]);
 
-        const result = jmapClient.parseMethodResponse(response.methodResponses[0]);
-
-        if (!result.success) {
+        if (!result.ok) {
           logger.error({ error: result.error }, 'JMAP error in list_mailboxes');
           return {
             content: [
               {
                 type: 'text' as const,
-                text: `Error listing mailboxes: ${result.error?.description || result.error?.type || 'Unknown error'}`,
+                text: `Error listing mailboxes: ${result.error.description || result.error.type}`,
               },
             ],
             isError: true,
           };
         }
 
-        const list = result.data?.list as Record<string, unknown>[] | undefined;
+        const list = result.value.list;
 
         if (!list) {
           return {
@@ -202,9 +189,7 @@ export function registerMailboxTools(
         }
 
         // Transform all mailboxes
-        let mailboxes: SimplifiedMailbox[] = list.map((item) =>
-          transformMailbox(item as unknown as Parameters<typeof transformMailbox>[0])
-        );
+        let mailboxes: SimplifiedMailbox[] = list.map((item) => transformMailbox(item));
 
         // Filter by role if specified (client-side filtering)
         if (role) {
@@ -267,41 +252,35 @@ export function registerMailboxTools(
       if (refused) return refused;
 
       try {
-        const session = jmapClient.getSession();
+        const accountId = jmapClient.getPrimaryAccountId();
 
-        const response = await jmapClient.request([
-          [
-            'Mailbox/set',
-            {
-              accountId: session.accountId,
-              create: {
-                new: {
-                  name: name.trim(),
-                  parentId: parentId || null,
-                  isSubscribed: true,
-                },
+        const [result] = await jmapClient.requestSettled((b) => [
+          b.call('Mailbox/set', {
+            accountId,
+            create: {
+              new: {
+                name: name.trim(),
+                parentId: parentId || null,
+                isSubscribed: true,
               },
             },
-            'createMailbox',
-          ],
+          }),
         ]);
 
-        const result = jmapClient.parseMethodResponse(response.methodResponses[0]);
-
-        if (!result.success) {
+        if (!result.ok) {
           logger.error({ error: result.error }, 'JMAP error in create_mailbox');
           return {
             content: [
               {
                 type: 'text' as const,
-                text: `Error creating mailbox: ${result.error?.description || result.error?.type || 'Unknown error'}`,
+                text: `Error creating mailbox: ${result.error.description || result.error.type}`,
               },
             ],
             isError: true,
           };
         }
 
-        const setResponse = result.data as unknown as MailboxSetResponse;
+        const setResponse = result.value;
 
         // Check for creation errors
         if (setResponse.notCreated?.['new']) {
@@ -399,44 +378,31 @@ export function registerMailboxTools(
       if (refused) return refused;
 
       try {
-        const session = jmapClient.getSession();
+        const accountId = jmapClient.getPrimaryAccountId();
 
         // Step 1: Fetch mailbox to check permissions and role
-        const getResponse = await jmapClient.request([
-          [
-            'Mailbox/get',
-            {
-              accountId: session.accountId,
-              ids: [mailboxId],
-              properties: ['id', 'name', 'role', 'myRights'],
-            },
-            'getMailbox',
-          ],
+        const [getResult] = await jmapClient.requestSettled((b) => [
+          b.call('Mailbox/get', {
+            accountId,
+            ids: [mailboxId],
+            properties: ['id', 'name', 'role', 'myRights'],
+          }),
         ]);
 
-        const getResult = jmapClient.parseMethodResponse(getResponse.methodResponses[0]);
-
-        if (!getResult.success) {
+        if (!getResult.ok) {
           return {
             content: [
               {
                 type: 'text' as const,
-                text: `Error checking mailbox: ${getResult.error?.description || getResult.error?.type || 'Unknown error'}`,
+                text: `Error checking mailbox: ${getResult.error.description || getResult.error.type}`,
               },
             ],
             isError: true,
           };
         }
 
-        const mailboxList = getResult.data?.list as
-          | Array<{
-              id: string;
-              name: string;
-              role: string | null;
-              myRights?: { mayRename?: boolean };
-            }>
-          | undefined;
-        const notFound = getResult.data?.notFound as string[] | undefined;
+        const mailboxList = getResult.value.list;
+        const notFound = getResult.value.notFound;
 
         if (notFound?.includes(mailboxId) || !mailboxList || mailboxList.length === 0) {
           return {
@@ -479,34 +445,28 @@ export function registerMailboxTools(
         }
 
         // Step 2: Perform rename
-        const setResponse = await jmapClient.request([
-          [
-            'Mailbox/set',
-            {
-              accountId: session.accountId,
-              update: {
-                [mailboxId]: { name: newName.trim() },
-              },
+        const [setResult] = await jmapClient.requestSettled((b) => [
+          b.call('Mailbox/set', {
+            accountId,
+            update: {
+              [mailboxId]: { name: newName.trim() },
             },
-            'renameMailbox',
-          ],
+          }),
         ]);
 
-        const setResult = jmapClient.parseMethodResponse(setResponse.methodResponses[0]);
-
-        if (!setResult.success) {
+        if (!setResult.ok) {
           return {
             content: [
               {
                 type: 'text' as const,
-                text: `Error renaming mailbox: ${setResult.error?.description || setResult.error?.type || 'Unknown error'}`,
+                text: `Error renaming mailbox: ${setResult.error.description || setResult.error.type}`,
               },
             ],
             isError: true,
           };
         }
 
-        const response = setResult.data as unknown as MailboxSetResponse;
+        const response = setResult.value;
 
         if (response.notUpdated?.[mailboxId]) {
           const error = response.notUpdated[mailboxId];
@@ -588,44 +548,31 @@ export function registerMailboxTools(
       if (refused) return refused;
 
       try {
-        const session = jmapClient.getSession();
+        const accountId = jmapClient.getPrimaryAccountId();
 
         // Step 1: Fetch mailbox to check permissions and role
-        const getResponse = await jmapClient.request([
-          [
-            'Mailbox/get',
-            {
-              accountId: session.accountId,
-              ids: [mailboxId],
-              properties: ['id', 'name', 'role', 'myRights'],
-            },
-            'getMailbox',
-          ],
+        const [getResult] = await jmapClient.requestSettled((b) => [
+          b.call('Mailbox/get', {
+            accountId,
+            ids: [mailboxId],
+            properties: ['id', 'name', 'role', 'myRights'],
+          }),
         ]);
 
-        const getResult = jmapClient.parseMethodResponse(getResponse.methodResponses[0]);
-
-        if (!getResult.success) {
+        if (!getResult.ok) {
           return {
             content: [
               {
                 type: 'text' as const,
-                text: `Error checking mailbox: ${getResult.error?.description || getResult.error?.type || 'Unknown error'}`,
+                text: `Error checking mailbox: ${getResult.error.description || getResult.error.type}`,
               },
             ],
             isError: true,
           };
         }
 
-        const mailboxList = getResult.data?.list as
-          | Array<{
-              id: string;
-              name: string;
-              role: string | null;
-              myRights?: { mayDelete?: boolean };
-            }>
-          | undefined;
-        const notFound = getResult.data?.notFound as string[] | undefined;
+        const mailboxList = getResult.value.list;
+        const notFound = getResult.value.notFound;
 
         if (notFound?.includes(mailboxId) || !mailboxList || mailboxList.length === 0) {
           return {
@@ -668,33 +615,27 @@ export function registerMailboxTools(
         }
 
         // Step 2: Attempt delete with onDestroyRemoveEmails based on force
-        const setResponse = await jmapClient.request([
-          [
-            'Mailbox/set',
-            {
-              accountId: session.accountId,
-              destroy: [mailboxId],
-              onDestroyRemoveEmails: force,
-            },
-            'deleteMailbox',
-          ],
+        const [setResult] = await jmapClient.requestSettled((b) => [
+          b.call('Mailbox/set', {
+            accountId,
+            destroy: [mailboxId],
+            onDestroyRemoveEmails: force,
+          }),
         ]);
 
-        const setResult = jmapClient.parseMethodResponse(setResponse.methodResponses[0]);
-
-        if (!setResult.success) {
+        if (!setResult.ok) {
           return {
             content: [
               {
                 type: 'text' as const,
-                text: `Error deleting mailbox: ${setResult.error?.description || setResult.error?.type || 'Unknown error'}`,
+                text: `Error deleting mailbox: ${setResult.error.description || setResult.error.type}`,
               },
             ],
             isError: true,
           };
         }
 
-        const response = setResult.data as unknown as MailboxSetResponse;
+        const response = setResult.value;
 
         // Handle specific destroy errors
         if (response.notDestroyed?.[mailboxId]) {

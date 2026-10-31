@@ -7,7 +7,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { loadConfig, type Config } from '../config/schema.js';
 import { createLogger, type Logger } from '../config/logger.js';
-import { JMAPClient } from '../jmap/client.js';
+import type { JmapClient } from 'jmap-client-ts';
+import { createJmapClient, loadAccountId } from '../jmap/client.js';
 import { formatStartupError } from '../errors.js';
 import { registerAllTools } from './tools/index.js';
 import { setApprover } from './approval.js';
@@ -28,13 +29,13 @@ const SERVER_NAME = 'mcp-twake-mail';
 export async function createMCPServer(
   config: Config,
   logger: Logger
-): Promise<{ server: McpServer; jmapClient: JMAPClient; signatureContent?: SignatureContent }> {
+): Promise<{ server: McpServer; jmapClient: JmapClient; signatureContent?: SignatureContent }> {
   const server = new McpServer({
     name: SERVER_NAME,
     version: SERVER_VERSION,
   });
 
-  const jmapClient = new JMAPClient(config, logger);
+  const jmapClient = createJmapClient(config, logger);
 
   // Load signature if configured
   const signatureContent = await loadSignature(config.JMAP_SIGNATURE_PATH, logger);
@@ -64,15 +65,15 @@ export async function startServer(): Promise<void> {
     const { server, jmapClient, signatureContent } = await createMCPServer(config, logger);
 
     // Step 4: Validate JMAP connection BEFORE accepting MCP requests
-    const session = await jmapClient.fetchSession();
-    logger.info({ accountId: session.accountId }, 'JMAP connection validated');
+    const accountId = await loadAccountId(jmapClient, logger);
+    logger.info({ accountId }, 'JMAP connection validated');
 
     // Step 5: Prior approval of every write (MCP elicitation), then register all MCP tools
     setApprover(server, {
       mode: config.JMAP_APPROVAL,
       language: (config.USER_LANGUAGE ?? '').toLowerCase().startsWith('fr') ? 'fr' : 'en',
       timeoutMs: config.JMAP_APPROVAL_TIMEOUT_MS,
-      as: config.JMAP_DEFAULT_FROM ?? (session as { username?: string }).username,
+      as: config.JMAP_DEFAULT_FROM ?? ((await jmapClient.getSession()).username || undefined),
       timeZone: config.USER_TIMEZONE,
       exempt: (config.JMAP_APPROVAL_EXEMPT ?? '').split(',').map((t) => t.trim()).filter(Boolean),
     });

@@ -9,7 +9,7 @@ import { basename, extname, join } from 'path';
 import { homedir } from 'os';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
-import type { JMAPClient } from '../../jmap/client.js';
+import type { EmailBodyPart, JmapClient } from 'jmap-client-ts';
 import type { Logger } from '../../config/logger.js';
 import { approverFor } from '../approval.js';
 
@@ -25,18 +25,6 @@ export interface AttachmentMetadata {
   type: string;
   size: number;
   isInline: boolean;
-}
-
-/**
- * JMAP body part structure from Email/get response.
- */
-interface JMAPBodyPart {
-  blobId: string;
-  name?: string | null;
-  type: string;
-  size: number;
-  disposition?: string | null;
-  cid?: string | null;
 }
 
 /**
@@ -78,17 +66,18 @@ function toFilename(name: string | undefined): string | null {
  * The wx flag also refuses to follow a symbolic link left at that path.
  * @returns The path written
  */
-async function writeNewFile(dir: string, filename: string, data: Buffer): Promise<string> {
+async function writeNewFile(dir: string, filename: string, blob: Blob): Promise<string> {
   const path = join(dir, filename);
   try {
-    await writeFile(path, data, { flag: 'wx', mode: 0o600 });
+    // Streamed: reading the blob into a buffer would hold a large file in memory twice.
+    await writeFile(path, blob.stream(), { flag: 'wx', mode: 0o600 });
     return path;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
   }
   const extension = extname(filename);
   const uniquePath = join(dir, `${basename(filename, extension)}-${randomUUID()}${extension}`);
-  await writeFile(uniquePath, data, { flag: 'wx', mode: 0o600 });
+  await writeFile(uniquePath, blob.stream(), { flag: 'wx', mode: 0o600 });
   return uniquePath;
 }
 
@@ -107,9 +96,9 @@ export function isInlineAttachment(part: { cid?: string | null; disposition?: st
  * @param part JMAP body part from attachments array
  * @returns AttachmentMetadata with isInline flag
  */
-function transformAttachment(part: JMAPBodyPart): AttachmentMetadata {
+function transformAttachment(part: EmailBodyPart): AttachmentMetadata {
   return {
-    blobId: part.blobId,
+    blobId: part.blobId as string,
     name: part.name ?? null,
     type: part.type,
     size: part.size,
@@ -144,7 +133,7 @@ function filterAttachments(
  */
 export function registerAttachmentTools(
   server: McpServer,
-  jmapClient: JMAPClient,
+  jmapClient: JmapClient,
   logger: Logger
 ): void {
   // get_attachments - list attachment metadata for an email (ATTACH-01, ATTACH-02)
@@ -172,35 +161,30 @@ export function registerAttachmentTools(
       logger.debug({ emailId, excludeInline, mimeTypeFilter }, 'get_attachments called');
 
       try {
-        const session = jmapClient.getSession();
-        const response = await jmapClient.request([
-          [
-            'Email/get',
-            {
-              accountId: session.accountId,
-              ids: [emailId],
-              properties: ['attachments'],
-              bodyProperties: ['blobId', 'name', 'type', 'size', 'disposition', 'cid'],
-            },
-            'getAttachments',
-          ],
+        const accountId = jmapClient.getPrimaryAccountId();
+        const [result] = await jmapClient.requestSettled((b) => [
+          b.call('Email/get', {
+            accountId,
+            ids: [emailId],
+            properties: ['attachments'],
+            bodyProperties: ['blobId', 'name', 'type', 'size', 'disposition', 'cid'],
+          }),
         ]);
 
-        const result = jmapClient.parseMethodResponse(response.methodResponses[0]);
-        if (!result.success) {
+        if (!result.ok) {
           logger.error({ error: result.error, emailId }, 'JMAP error in get_attachments');
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
-                text: `Failed to retrieve attachments: ${result.error?.description || result.error?.type || 'Unknown error'}`,
+                text: `Failed to retrieve attachments: ${result.error.description || result.error.type}`,
               },
             ],
           };
         }
 
-        const emails = result.data?.list as Array<{ id: string; attachments?: JMAPBodyPart[] }>;
+        const emails = result.value.list;
         if (!emails || emails.length === 0) {
           return {
             isError: true,
@@ -293,16 +277,20 @@ export function registerAttachmentTools(
         }
 
         // Download the blob
-        const data = await jmapClient.downloadBlob(blobId, filename, type);
-        const buffer = Buffer.from(data);
+        const blob = await jmapClient.download({
+          accountId: jmapClient.getPrimaryAccountId(),
+          blobId,
+          name: filename,
+          type: type || 'application/octet-stream',
+        });
 
         logger.debug(
-          { blobId, size: data.byteLength, maxInline: MAX_INLINE_SIZE },
+          { blobId, size: blob.size, maxInline: MAX_INLINE_SIZE },
           'download_attachment downloaded'
         );
 
         // Decide whether to return inline or save to disk
-        if (data.byteLength > MAX_INLINE_SIZE) {
+        if (blob.size > MAX_INLINE_SIZE) {
           const refused = await approverFor(server).gate('download_attachment', () => ({
             action: 'download_attachment',
             details: [['attachments', filename]],
@@ -311,10 +299,10 @@ export function registerAttachmentTools(
 
           const downloadDir = join(homedir(), 'Downloads');
           await mkdir(downloadDir, { recursive: true });
-          const outputPath = await writeNewFile(downloadDir, filename, buffer);
+          const outputPath = await writeNewFile(downloadDir, filename, blob);
 
           logger.debug(
-            { blobId, size: data.byteLength, path: outputPath },
+            { blobId, size: blob.size, path: outputPath },
             'download_attachment saved to disk'
           );
 
@@ -327,7 +315,7 @@ export function registerAttachmentTools(
                     blobId,
                     name: filename,
                     mimeType: type || 'application/octet-stream',
-                    size: data.byteLength,
+                    size: blob.size,
                     savedTo: outputPath,
                     message: `File saved to ${outputPath} (too large for inline response)`,
                   },
@@ -339,10 +327,10 @@ export function registerAttachmentTools(
           };
         } else {
           // Return inline as base64
-          const base64 = buffer.toString('base64');
+          const base64 = Buffer.from(await blob.arrayBuffer()).toString('base64');
 
           logger.debug(
-            { blobId, size: data.byteLength },
+            { blobId, size: blob.size },
             'download_attachment returning inline'
           );
 
@@ -355,7 +343,7 @@ export function registerAttachmentTools(
                     blobId,
                     name: filename,
                     mimeType: type || 'application/octet-stream',
-                    size: data.byteLength,
+                    size: blob.size,
                     data: base64,
                   },
                   null,

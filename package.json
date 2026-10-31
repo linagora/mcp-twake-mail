@@ -9,6 +9,7 @@
   },
   "files": [
     "build",
+    "!build/testing",
     "docs",
     "README.md",
     "LICENSE",
@@ -72,7 +73,6 @@
     "eslint": "^10.13.0",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.72.1",
-    "vitest": "^5.0.5",
-    "vitest-fetch-mock": "^0.4.0"
+    "vitest": "^5.0.5"
   }
 }

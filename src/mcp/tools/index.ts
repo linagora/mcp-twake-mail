@@ -3,7 +3,7 @@
  * Centralizes all MCP tool registrations.
  */
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { JMAPClient } from '../../jmap/client.js';
+import type { JmapClient } from 'jmap-client-ts';
 import type { Logger } from '../../config/logger.js';
 import type { SignatureContent } from '../../signature/index.js';
 import { registerEmailTools } from './email.js';
@@ -31,7 +31,7 @@ export interface EmailSendingOptions {
  */
 export function registerAllTools(
   server: McpServer,
-  jmapClient: JMAPClient,
+  jmapClient: JmapClient,
   logger: Logger,
   emailSendingOptions?: EmailSendingOptions
 ): void {
