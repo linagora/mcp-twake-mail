@@ -8,6 +8,8 @@ All notable changes to mcp-twake-mail are documented here. The format follows [K
 
 ### Changed
 - `download_attachment` no longer takes `saveToPath`: large files always go to `~/Downloads`, under the last segment of their name, in mode 600, and an existing file is kept. The tool is annotated as writing, and saving a file asks for the prior approval (`JMAP_APPROVAL`); small files returned inline do not.
+- JMAP goes through [jmap-client-ts](https://github.com/linagora/jmap-client-ts) v2, installed from `github:Crash--/jmap-client-ts#v2` until it is published. This move does not change tools, schemas or outputs.
+- The JMAP session must advertise `accounts`, `state`, `downloadUrl` and `uploadUrl`, responses must carry `sessionState` (RFC 8620), and the session is reloaded when that state changes.
 
 ## [4.0.0] - 2026-11-01
 
