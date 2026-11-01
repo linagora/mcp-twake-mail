@@ -4,6 +4,19 @@ All notable changes to mcp-twake-mail are documented here. The format follows [K
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-11-01
+
+### Added
+- Prior approval of every write by the user, asked by the server itself through MCP elicitation (`JMAP_APPROVAL=elicit`, the default). The 23 tools that send, draft, mark, move, label or delete show the exact action, with a unique reference, and act only on accept: sending tools show the e-mail as it will leave (sender, computed recipients, subject, text, attachments; the long signature is named, not repeated), the others the e-mails (sender, date, subject) and folders by name. Prompts in English or French (`USER_LANGUAGE`, `USER_TIMEZONE`), `JMAP_APPROVAL_TIMEOUT_MS`, `JMAP_APPROVAL_EXEMPT` (tools the user chooses to run without a prompt, empty by default).
+- `scripts/live-approval.mjs`: live test of the approvals on a real account; it sends nothing and deletes its test draft.
+
+### Changed
+- **Breaking**: with an MCP client that does not support elicitation, write tools now return an error and do nothing. Set `JMAP_APPROVAL=client` to keep the 3.x behaviour when your client confirms writes itself.
+- **Breaking**: `update_draft` replaces the draft with a new one (JMAP e-mails are immutable except keywords and mailboxes, RFC 8621) and returns its new `draftId` (and `previousDraftId`). A new `body` is plain text and gets the configured signature, like `create_draft`. Threading headers, attachments, folders and keywords are kept.
+
+### Fixed
+- `update_draft` failed on a real server (`invalidPatch`: it patched `bodyValues`, which JMAP forbids) and could not change the text of a draft.
+
 ## [3.0.0] - 2026-11-01
 
 ### Breaking

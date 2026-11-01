@@ -11,6 +11,7 @@ import type { Logger } from '../../config/logger.js';
 import type { EmailSetResponse, Identity, EmailSubmissionSetResponse } from '../../types/jmap.js';
 import type { SignatureContent } from '../../signature/index.js';
 import { buildDraftBody } from './draft-body.js';
+import { approverFor } from '../approval.js';
 
 /**
  * Common annotations for non-destructive write operations.
@@ -86,6 +87,8 @@ export function registerEmailOperationTools(
     },
     async ({ emailId }) => {
       logger.debug({ emailId }, 'mark_as_read called');
+      const refused = await approverFor(server).gate('mark_as_read', async () => ({ action: 'mark_as_read', details: [['email', await approverFor(server).emails(jmapClient, [emailId])]] }));
+      if (refused) return refused;
 
       try {
         const session = jmapClient.getSession();
@@ -170,6 +173,8 @@ export function registerEmailOperationTools(
     },
     async ({ emailId }) => {
       logger.debug({ emailId }, 'mark_as_unread called');
+      const refused = await approverFor(server).gate('mark_as_unread', async () => ({ action: 'mark_as_unread', details: [['email', await approverFor(server).emails(jmapClient, [emailId])]] }));
+      if (refused) return refused;
 
       try {
         const session = jmapClient.getSession();
@@ -259,6 +264,8 @@ export function registerEmailOperationTools(
     },
     async ({ emailId, permanent }) => {
       logger.debug({ emailId, permanent }, 'delete_email called');
+      const refused = await approverFor(server).gate('delete_email', async () => ({ action: permanent ? 'delete_email_permanently' : 'delete_email', details: [['email', await approverFor(server).emails(jmapClient, [emailId])]] }));
+      if (refused) return refused;
 
       try {
         const session = jmapClient.getSession();
@@ -488,6 +495,8 @@ export function registerEmailOperationTools(
     },
     async ({ emailId, targetMailboxId }) => {
       logger.debug({ emailId, targetMailboxId }, 'move_email called');
+      const refused = await approverFor(server).gate('move_email', async () => ({ action: 'move_email', details: [['email', await approverFor(server).emails(jmapClient, [emailId])], ['destination', await approverFor(server).mailbox(jmapClient, targetMailboxId)]] }));
+      if (refused) return refused;
 
       try {
         const session = jmapClient.getSession();
@@ -573,6 +582,8 @@ export function registerEmailOperationTools(
     },
     async ({ emailId, mailboxId }) => {
       logger.debug({ emailId, mailboxId }, 'add_label called');
+      const refused = await approverFor(server).gate('add_label', async () => ({ action: 'add_label', details: [['email', await approverFor(server).emails(jmapClient, [emailId])], ['label', await approverFor(server).mailbox(jmapClient, mailboxId)]] }));
+      if (refused) return refused;
 
       try {
         const session = jmapClient.getSession();
@@ -658,6 +669,8 @@ export function registerEmailOperationTools(
     },
     async ({ emailId, mailboxId }) => {
       logger.debug({ emailId, mailboxId }, 'remove_label called');
+      const refused = await approverFor(server).gate('remove_label', async () => ({ action: 'remove_label', details: [['email', await approverFor(server).emails(jmapClient, [emailId])], ['label', await approverFor(server).mailbox(jmapClient, mailboxId)]] }));
+      if (refused) return refused;
 
       try {
         const session = jmapClient.getSession();
@@ -868,6 +881,8 @@ export function registerEmailOperationTools(
         }
 
         // Create the draft
+        const refused = await approverFor(server).gate('create_draft', async () => ({ action: 'create_draft', details: [...approverFor(server).message(emailCreate), ['in_reply_to', inReplyTo]] }));
+        if (refused) return refused;
         const createResponse = await jmapClient.request([
           [
             'Email/set',
@@ -953,7 +968,7 @@ export function registerEmailOperationTools(
     'update_draft',
     {
       title: 'Update Draft Email',
-      description: 'Update an existing draft email. Modify subject, body, or recipients. Supports optimistic concurrency control via ifInState parameter.',
+      description: 'Update an existing draft email: subject, body (plain text, without signature: the configured signature is added) or recipients. The draft is replaced by a new one (JMAP e-mails are immutable): use the returned draftId afterwards. Supports optimistic concurrency control via ifInState.',
       inputSchema: {
         draftId: z.string().describe('The unique identifier of the draft email to update'),
         subject: z.string().optional().describe('New subject line'),
@@ -969,16 +984,14 @@ export function registerEmailOperationTools(
       logger.debug({ draftId, subject, hasBody: !!body, to, cc, bcc, ifInState }, 'update_draft called');
 
       try {
-        // Build update object using patch syntax for body
-        const updateObj: Record<string, unknown> = {};
-        if (subject !== undefined) updateObj.subject = subject;
-        if (body !== undefined) updateObj['bodyValues/1/value'] = body;
-        if (to !== undefined) updateObj.to = to.map(email => ({ email }));
-        if (cc !== undefined) updateObj.cc = cc.map(email => ({ email }));
-        if (bcc !== undefined) updateObj.bcc = bcc.map(email => ({ email }));
-
-        // Check if any fields to update
-        if (Object.keys(updateObj).length === 0) {
+        const changed = [
+          subject !== undefined && 'subject',
+          body !== undefined && 'body',
+          to !== undefined && 'to',
+          cc !== undefined && 'cc',
+          bcc !== undefined && 'bcc',
+        ].filter(Boolean) as string[];
+        if (changed.length === 0) {
           return {
             isError: true,
             content: [
@@ -990,31 +1003,89 @@ export function registerEmailOperationTools(
           };
         }
 
+        // JMAP e-mails are immutable except keywords and mailboxes (RFC 8621 §4.6): a draft is changed
+        // by creating its new version and destroying the old one, in one request.
         const session = jmapClient.getSession();
+        const getResponse = await jmapClient.request([
+          [
+            'Email/get',
+            {
+              accountId: session.accountId,
+              ids: [draftId],
+              properties: ['from', 'to', 'cc', 'bcc', 'replyTo', 'subject', 'inReplyTo', 'references', 'mailboxIds', 'keywords', 'textBody', 'htmlBody', 'bodyValues', 'attachments'],
+              fetchAllBodyValues: true,
+            },
+            'getDraft',
+          ],
+        ]);
+        const got = jmapClient.parseMethodResponse(getResponse.methodResponses[0]);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- JMAP Email object, read field by field below
+        const draft = got.success ? ((got.data as { list?: Record<string, any>[] }).list ?? [])[0] : undefined;
+        if (!draft) {
+          return { isError: true, content: [{ type: 'text' as const, text: 'Draft not found. It may have been deleted or sent.' }] };
+        }
+        if (draft.keywords?.$draft !== true) {
+          return { isError: true, content: [{ type: 'text' as const, text: 'This e-mail is not a draft: only drafts can be updated.' }] };
+        }
 
-        // Build request params with optional ifInState
+        const part = (p: { partId?: string; type?: string }) => ({ partId: p.partId, type: p.type });
+        const replacement: Record<string, unknown> = {
+          mailboxIds: draft.mailboxIds,
+          keywords: draft.keywords,
+          from: draft.from,
+          subject: subject ?? draft.subject ?? '',
+        };
+        const recipients = (list: string[] | undefined, current: unknown) => (list !== undefined ? list.map((email) => ({ email })) : current);
+        for (const [key, value] of [
+          ['to', recipients(to, draft.to)],
+          ['cc', recipients(cc, draft.cc)],
+          ['bcc', recipients(bcc, draft.bcc)],
+          ['replyTo', draft.replyTo],
+          ['inReplyTo', draft.inReplyTo],
+          ['references', draft.references],
+        ] as const) {
+          if (Array.isArray(value) && value.length) replacement[key] = value;
+        }
+        if (body !== undefined) {
+          Object.assign(replacement, buildDraftBody({ body, signature: signatureContent, includeSignature: true }));
+        } else {
+          const values = draft.bodyValues as Record<string, { value: string }> | undefined;
+          const parts = [...(draft.textBody ?? []), ...(draft.htmlBody ?? [])] as { partId?: string }[];
+          replacement.bodyValues = Object.fromEntries(parts.filter((p) => p.partId && values?.[p.partId]).map((p) => [p.partId, { value: values![p.partId!].value }]));
+          if (draft.textBody?.length) replacement.textBody = draft.textBody.map(part);
+          if (draft.htmlBody?.length) replacement.htmlBody = draft.htmlBody.map(part);
+        }
+        if (Array.isArray(draft.attachments) && draft.attachments.length) {
+          replacement.attachments = draft.attachments.map((a: Record<string, unknown>) => ({ blobId: a.blobId, type: a.type, name: a.name, disposition: a.disposition ?? 'attachment' }));
+        }
+
+        const refused = await approverFor(server).gate('update_draft', async () => ({
+          action: 'update_draft',
+          details: [['draft', await approverFor(server).emails(jmapClient, [draftId])], ['changes', changed.join(', ')], ...approverFor(server).message(replacement)],
+        }));
+        if (refused) return refused;
+
         const requestParams: Record<string, unknown> = {
           accountId: session.accountId,
-          update: {
-            [draftId]: updateObj,
-          },
+          create: { draft: replacement },
+          destroy: [draftId],
         };
         if (ifInState) {
           requestParams.ifInState = ifInState;
         }
 
-        const response = await jmapClient.request([
-          [
-            'Email/set',
-            requestParams,
-            'updateDraft',
-          ],
-        ]);
+        const response = await jmapClient.request([['Email/set', requestParams, 'updateDraft']]);
 
         // Level 1: parseMethodResponse check
         const result = jmapClient.parseMethodResponse(response.methodResponses[0]);
         if (!result.success) {
           logger.error({ error: result.error, draftId }, 'JMAP error in update_draft');
+          if (result.error?.type === 'stateMismatch') {
+            return {
+              isError: true,
+              content: [{ type: 'text' as const, text: 'Draft was modified by another client. Please refresh and try again.' }],
+            };
+          }
           return {
             isError: true,
             content: [
@@ -1026,54 +1097,34 @@ export function registerEmailOperationTools(
           };
         }
 
-        // Level 2: notUpdated check
-        const setResponse = result.data as unknown as EmailSetResponse;
-        if (setResponse.notUpdated?.[draftId]) {
-          const error = setResponse.notUpdated[draftId];
-          logger.error({ error, draftId }, 'Email/set notUpdated in update_draft');
-
-          // User-friendly error messages for common cases
-          if (error.type === 'notFound') {
-            return {
-              isError: true,
-              content: [
-                {
-                  type: 'text' as const,
-                  text: 'Draft not found. It may have been deleted or sent.',
-                },
-              ],
-            };
-          }
-
-          if (error.type === 'stateMismatch') {
-            return {
-              isError: true,
-              content: [
-                {
-                  type: 'text' as const,
-                  text: 'Draft was modified by another client. Please refresh and try again.',
-                },
-              ],
-            };
-          }
-
+        // Level 2: notCreated / notDestroyed checks
+        const setResponse = result.data as unknown as EmailSetResponse & {
+          notDestroyed?: Record<string, { type: string; description?: string }>;
+        };
+        const notCreated = setResponse.notCreated?.draft;
+        if (notCreated) {
+          logger.error({ error: notCreated, draftId }, 'Email/set notCreated in update_draft');
           return {
             isError: true,
-            content: [
-              {
-                type: 'text' as const,
-                text: `Failed to update draft: ${error.type} - ${error.description || ''}`,
-              },
-            ],
+            content: [{ type: 'text' as const, text: `Failed to update draft: ${notCreated.type} - ${notCreated.description || ''}` }],
           };
         }
-
-        logger.debug({ draftId, updatedFields: Object.keys(updateObj) }, 'update_draft success');
+        const newId = setResponse.created?.draft?.id;
+        const kept = setResponse.notDestroyed?.[draftId];
+        logger.debug({ draftId, newId, updatedFields: changed }, 'update_draft success');
         return {
           content: [
             {
               type: 'text' as const,
-              text: JSON.stringify({ success: true, draftId, updated: Object.keys(updateObj) }),
+              text: JSON.stringify({
+                success: true,
+                draftId: newId,
+                previousDraftId: draftId,
+                updated: changed,
+                note: kept
+                  ? `New draft created, but the previous one could not be deleted (${kept.type}): delete it from Drafts.`
+                  : 'Drafts cannot be edited in place: the draft was replaced, use the new draftId.',
+              }),
             },
           ],
         };
@@ -1106,6 +1157,8 @@ export function registerEmailOperationTools(
     },
     async ({ draftId }) => {
       logger.debug({ draftId }, 'send_draft called');
+      const refused = await approverFor(server).gate('send_draft', async () => ({ action: 'send_draft', details: await approverFor(server).stored(jmapClient, draftId) }));
+      if (refused) return refused;
 
       try {
         const session = jmapClient.getSession();

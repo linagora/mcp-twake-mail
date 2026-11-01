@@ -47,6 +47,7 @@ tests/             # unit and integration tests (Vitest)
 - **stdout is reserved for the MCP JSON-RPC protocol**: all logs go to stderr through the logger.
 - Validate tool inputs with Zod schemas, and give every tool accurate MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`).
 - Error messages say what went wrong **and** how to fix it: they are read by an AI assistant and by its user.
+- A new write tool calls `approverFor(server).gate(...)` right before writing (see `src/mcp/approval.ts`) and gets a test proving nothing is written when the user refuses (`tests/unit/mcp/approval.test.ts`).
 - Never log or return secrets (passwords, tokens, refresh tokens). Never commit real hostnames, accounts or personal data in tests or docs: use `example.com`.
 - A new tool or environment variable must come with tests and an update of the README.
 

@@ -76,6 +76,8 @@ async function testConnection(env: Record<string, string>): Promise<{ success: b
       JMAP_OIDC_REDIRECT_URI: env.JMAP_OIDC_REDIRECT_URI || 'http://localhost:3000/callback',
       JMAP_REQUEST_TIMEOUT: 30000,
       LOG_LEVEL: 'error' as const,
+      JMAP_APPROVAL: 'elicit' as const,
+      JMAP_APPROVAL_TIMEOUT_MS: 600000,
     };
 
     const logger = createLogger('error');

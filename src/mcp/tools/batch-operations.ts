@@ -9,6 +9,7 @@ import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import type { JMAPClient } from '../../jmap/client.js';
 import type { Logger } from '../../config/logger.js';
 import type { EmailSetResponse } from '../../types/jmap.js';
+import { approverFor } from '../approval.js';
 
 /**
  * Result format for batch operations with per-email success/failure reporting.
@@ -138,6 +139,8 @@ export function registerBatchOperationTools(
     },
     async ({ emailIds }) => {
       logger.debug({ emailIds, count: emailIds.length }, 'batch_mark_read called');
+      const refused = await approverFor(server).gate('batch_mark_read', async () => ({ action: 'batch_mark_read', details: [['emails', await approverFor(server).emails(jmapClient, emailIds)]] }));
+      if (refused) return refused;
 
       try {
         const session = jmapClient.getSession();
@@ -221,6 +224,8 @@ export function registerBatchOperationTools(
     },
     async ({ emailIds }) => {
       logger.debug({ emailIds, count: emailIds.length }, 'batch_mark_unread called');
+      const refused = await approverFor(server).gate('batch_mark_unread', async () => ({ action: 'batch_mark_unread', details: [['emails', await approverFor(server).emails(jmapClient, emailIds)]] }));
+      if (refused) return refused;
 
       try {
         const session = jmapClient.getSession();
@@ -309,6 +314,8 @@ export function registerBatchOperationTools(
         { emailIds, count: emailIds.length, targetMailboxId },
         'batch_move called'
       );
+      const refused = await approverFor(server).gate('batch_move', async () => ({ action: 'batch_move', details: [['emails', await approverFor(server).emails(jmapClient, emailIds)], ['destination', await approverFor(server).mailbox(jmapClient, targetMailboxId)]] }));
+      if (refused) return refused;
 
       try {
         const session = jmapClient.getSession();
@@ -400,6 +407,8 @@ export function registerBatchOperationTools(
         { emailIds, count: emailIds.length, permanent },
         'batch_delete called'
       );
+      const refused = await approverFor(server).gate('batch_delete', async () => ({ action: permanent ? 'batch_delete_permanently' : 'batch_delete', details: [['emails', await approverFor(server).emails(jmapClient, emailIds)]] }));
+      if (refused) return refused;
 
       try {
         const session = jmapClient.getSession();
@@ -621,6 +630,8 @@ export function registerBatchOperationTools(
         { emailIds, count: emailIds.length, mailboxId },
         'batch_add_label called'
       );
+      const refused = await approverFor(server).gate('batch_add_label', async () => ({ action: 'batch_add_label', details: [['emails', await approverFor(server).emails(jmapClient, emailIds)], ['label', await approverFor(server).mailbox(jmapClient, mailboxId)]] }));
+      if (refused) return refused;
 
       try {
         const session = jmapClient.getSession();
@@ -709,6 +720,8 @@ export function registerBatchOperationTools(
         { emailIds, count: emailIds.length, mailboxId },
         'batch_remove_label called'
       );
+      const refused = await approverFor(server).gate('batch_remove_label', async () => ({ action: 'batch_remove_label', details: [['emails', await approverFor(server).emails(jmapClient, emailIds)], ['label', await approverFor(server).mailbox(jmapClient, mailboxId)]] }));
+      if (refused) return refused;
 
       try {
         const session = jmapClient.getSession();

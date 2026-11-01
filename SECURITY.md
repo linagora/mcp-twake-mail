@@ -8,7 +8,9 @@ Security fixes are released for the latest minor version.
 
 | Version | Supported |
 |---|---|
-| 2.1.x | ✅ |
+| 4.x | ✅ |
+| 3.x | ❌ |
+| 2.1.x | ❌ |
 | older | ❌ |
 
 ## Reporting a vulnerability
@@ -34,7 +36,8 @@ We will acknowledge your report within **5 business days**, keep you informed of
 An MCP server acts **with the full rights of the account it is configured with**. Keep these points in mind:
 
 - **Credentials**: `JMAP_PASSWORD`, `JMAP_TOKEN` and OIDC tokens are secrets. OIDC tokens are stored in `~/.mcp-twake-mail/` with `0600` permissions; prefer OIDC or `JMAP_AUTH_METHOD=command` (short-lived tokens from a broker you control) over static passwords.
-- **Sending on the user's behalf**: `send_email`, `reply_email`, `forward_email` and `send_draft` send real mail. For an autonomous assistant, filter them out in your MCP client and keep a drafts-only workflow (see *Recommended safe configuration* in the README).
+- **Prior approval**: with `JMAP_APPROVAL=elicit` (the default), the server asks the user, through MCP elicitation, to approve every write before doing it: sending tools show the e-mail as it will leave (sender, computed recipients, subject, text, attachments), the others the e-mails and folders they touch, with a unique reference. It fails closed: refusal, timeout, error or a client without elicitation means nothing is sent or changed. `JMAP_APPROVAL=client` hands this to the MCP client; `JMAP_APPROVAL_EXEMPT` lifts it for the tools the user lists.
+- **Sending on the user's behalf**: `send_email`, `reply_email`, `forward_email` and `send_draft` send real mail. For a drafts-only workflow, filter them out in your MCP client (see *Recommended safe configuration* in the README).
 - **Destructive tools**: `delete_email`, `batch_delete` and `delete_mailbox` carry `destructiveHint`; MCP clients should ask for confirmation.
 - **Prompt injection**: email bodies are untrusted content written by third parties. An incoming message can try to instruct the assistant; never let an assistant act on mail content without human review of write actions.
 - **Transport**: HTTPS is required for the JMAP session URL.

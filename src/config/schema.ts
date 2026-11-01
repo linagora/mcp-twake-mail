@@ -46,6 +46,13 @@ export const envSchema = z
     // Email identity and signature configuration
     JMAP_DEFAULT_FROM: z.string().email('JMAP_DEFAULT_FROM must be a valid email address').optional(),
     JMAP_SIGNATURE_PATH: z.string().optional(),
+    // Prior approval of every write: elicit = the server asks the user (MCP elicitation); client = the MCP client confirms
+    JMAP_APPROVAL: z.enum(['elicit', 'client']).default('elicit'),
+    JMAP_APPROVAL_TIMEOUT_MS: z.coerce.number().int().positive().default(600000),
+    // Comma-separated tools the user chose to run without a prompt (e.g. create_draft for a scheduled job). Empty by default.
+    JMAP_APPROVAL_EXEMPT: z.string().optional(),
+    USER_LANGUAGE: z.string().optional(),
+    USER_TIMEZONE: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     if (data.JMAP_OIDC_LOCAL_PORT !== undefined) {

@@ -9,6 +9,7 @@ import { registerEmailSendingTools } from '../../../../src/mcp/tools/email-sendi
 import type { JMAPClient } from '../../../../src/jmap/client.js';
 import type { Logger } from '../../../../src/config/logger.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { setApprover } from '../../../../src/mcp/approval.js';
 
 // Test utilities
 interface ToolRegistration {
@@ -52,6 +53,8 @@ describe('Email Sending Tools', () => {
         });
       }),
     } as unknown as McpServer;
+    // these tests script every JMAP call: the client confirms (approval prompts are tested in tests/unit/mcp/approval.test.ts)
+    setApprover(mockServer, { mode: 'client', language: 'en', timeoutMs: 1000 });
 
     // Mock JMAPClient
     mockJmapClient = {

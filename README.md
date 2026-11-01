@@ -55,7 +55,9 @@ Used together, they let one assistant prepare a meeting from the invitation, the
 | Delete ⚠️ | `delete_email` |
 | Attachments | `get_attachments`, `download_attachment` |
 
-⚠️ = sends mail on your behalf or deletes data. Every tool carries MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`) so clients can ask for confirmation.
+⚠️ = sends mail on your behalf or deletes data. Every tool carries MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`).
+
+**Every write is approved by you first.** Before a tool sends, drafts, marks, moves, labels or deletes anything, the server itself shows you the exact action through MCP elicitation (see [Prior approval](#prior-approval)) and acts only on your explicit OK. Reading e-mails, threads and attachments needs no approval.
 
 ### Highlights
 
@@ -133,6 +135,11 @@ See [docs/oidc-configuration.md](docs/oidc-configuration.md) and [docs/auto-disc
 | `JMAP_SIGNATURE_PATH` | Markdown signature file (inline HTML allowed) | none |
 | `JMAP_REQUEST_TIMEOUT` | Request timeout (ms) | `30000` |
 | `LOG_LEVEL` | `fatal`, `error`, `warn`, `info`, `debug`, `trace` | `info` |
+| `JMAP_APPROVAL` | `elicit`: the server asks you before every write; `client`: your MCP client confirms | `elicit` |
+| `JMAP_APPROVAL_TIMEOUT_MS` | How long an approval prompt waits for your answer | `600000` |
+| `JMAP_APPROVAL_EXEMPT` | Comma-separated tools you choose to run without a prompt (e.g. `create_draft` for a scheduled job that prepares drafts) | none |
+| `USER_LANGUAGE` | Language of the approval prompts, `en` or `fr` | `en` |
+| `USER_TIMEZONE` | IANA time zone of the dates shown in the prompts | system |
 
 Example signature file:
 
@@ -143,6 +150,31 @@ Head of Operations, Example Corp
 ```
 
 The signature is read at startup: restart the server after editing it.
+
+### Prior approval
+
+With `JMAP_APPROVAL=elicit` (the default), every write tool sends the MCP client an [elicitation](https://modelcontextprotocol.io/specification/draft/client/elicitation) request before it acts, for instance:
+
+```
+Twake Mail: Send a reply
+As: jane.doe@example.com (your account)
+In reply to: Bob DURAND <bob.durand@example.com> · Budget 2027
+From: Jane DOE <jane.doe@example.com>
+To: Bob DURAND <bob.durand@example.com>
+Cc: chloe.petit@example.com
+Subject: Re: Budget 2027
+Text:
+Approved, thanks Bob.
+[signature included]
+
+Ref. 3f9a1c · Accept to do it now, refuse to cancel.
+```
+
+- Sending tools show the e-mail as it will leave: sender, the recipients the server computed (reply-all included), subject, text and attachments. `send_draft` reads the draft back first.
+- Other tools list the e-mails they touch (sender, date, subject; at most 10 shown) and the folders by name.
+- The server acts only on *accept*. A refusal, a dismissal, a timeout or an error sends and changes nothing, and the tool tells the assistant not to retry.
+- A client without elicitation support gets an error and nothing is done. Set `JMAP_APPROVAL=client` only if your MCP client asks you to confirm every write tool itself.
+- `JMAP_APPROVAL_EXEMPT` lets you lift the prompt for chosen tools only (empty by default).
 
 ## Use it with your assistant
 
@@ -192,7 +224,15 @@ mcp_servers:
       JMAP_AUTH_METHOD: command
       JMAP_TOKEN_COMMAND: /usr/local/bin/my-token-broker token
       JMAP_SIGNATURE_PATH: ~/.mcp-twake-mail/signature.md
+      JMAP_APPROVAL_TIMEOUT_MS: "330000"
+      USER_LANGUAGE: fr
+    timeout: 420            # longer than the approval wait
+    elicitation:
+      enabled: true
+      timeout: 300
 ```
+
+Hermes shows the approval prompts in the desktop app, the terminal or on your messaging platform, and declines them where nobody can answer (cron jobs, one-shot queries).
 
 ### Other MCP clients
 
@@ -200,9 +240,7 @@ Any client that can launch a stdio MCP server works: command `npx`, arguments `-
 
 ## Recommended safe configuration
 
-With the full tool set, an assistant can send mail in your name. For day-to-day use we recommend a **drafts-only** setup: the assistant reads, searches, organises and prepares drafts; you send them yourself from Twake Mail.
-
-Filter out the sending and deleting tools in your MCP client, for example with Hermes Agent:
+Keep `JMAP_APPROVAL=elicit` (the default): every e-mail sent in your name, and every other write, waits for your OK on the exact content. If you prefer that the assistant never sends at all (**drafts only**: you send from Twake Mail), filter out the sending and deleting tools in your MCP client, for example with Hermes Agent:
 
 ```yaml
     tools:

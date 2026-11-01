@@ -10,6 +10,7 @@ import { createLogger, type Logger } from '../config/logger.js';
 import { JMAPClient } from '../jmap/client.js';
 import { formatStartupError } from '../errors.js';
 import { registerAllTools } from './tools/index.js';
+import { setApprover } from './approval.js';
 import { loadSignature, type SignatureContent } from '../signature/index.js';
 
 /** Server version (matches package.json) */
@@ -66,7 +67,15 @@ export async function startServer(): Promise<void> {
     const session = await jmapClient.fetchSession();
     logger.info({ accountId: session.accountId }, 'JMAP connection validated');
 
-    // Step 5: Register all MCP tools
+    // Step 5: Prior approval of every write (MCP elicitation), then register all MCP tools
+    setApprover(server, {
+      mode: config.JMAP_APPROVAL,
+      language: (config.USER_LANGUAGE ?? '').toLowerCase().startsWith('fr') ? 'fr' : 'en',
+      timeoutMs: config.JMAP_APPROVAL_TIMEOUT_MS,
+      as: config.JMAP_DEFAULT_FROM ?? (session as { username?: string }).username,
+      timeZone: config.USER_TIMEZONE,
+      exempt: (config.JMAP_APPROVAL_EXEMPT ?? '').split(',').map((t) => t.trim()).filter(Boolean),
+    });
     registerAllTools(server, jmapClient, logger, {
       signatureContent,
       defaultFrom: config.JMAP_DEFAULT_FROM,

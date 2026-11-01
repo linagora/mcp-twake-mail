@@ -7,6 +7,7 @@ import { registerBatchOperationTools } from './batch-operations.js';
 import type { JMAPClient } from '../../jmap/client.js';
 import type { Logger } from '../../config/logger.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { setApprover } from '../approval.js';
 
 // Mock types
 type ToolHandler = (args: Record<string, unknown>) => Promise<{
@@ -46,6 +47,7 @@ describe('registerBatchOperationTools', () => {
     } as unknown as Logger;
 
     // Register all tools
+    setApprover(mockServer, { mode: 'client', language: 'en', timeoutMs: 1000 });
     registerBatchOperationTools(mockServer, mockJmapClient, mockLogger);
   });
 

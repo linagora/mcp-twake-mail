@@ -9,6 +9,7 @@ import { registerEmailOperationTools } from '../../../../src/mcp/tools/email-ope
 import type { JMAPClient } from '../../../../src/jmap/client.js';
 import type { Logger } from '../../../../src/config/logger.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { setApprover } from '../../../../src/mcp/approval.js';
 
 // Test utilities
 interface ToolRegistration {
@@ -52,6 +53,8 @@ describe('Draft Management Tools', () => {
         });
       }),
     } as unknown as McpServer;
+    // these tests script every JMAP call: the client confirms (approval prompts are tested in tests/unit/mcp/approval.test.ts)
+    setApprover(mockServer, { mode: 'client', language: 'en', timeoutMs: 1000 });
 
     // Mock JMAPClient
     mockJmapClient = {
@@ -83,58 +86,61 @@ describe('Draft Management Tools', () => {
       expect(tool.config.annotations.openWorldHint).toBe(true);
     });
 
-    it('updates draft subject and body using patch syntax', async () => {
+    // JMAP e-mails are immutable except keywords and mailboxes (RFC 8621 §4.6): update_draft reads the
+    // draft, creates its new version and destroys the old one in one Email/set.
+    const DRAFT = {
+      id: 'draft-1',
+      from: [{ name: 'Alice MARTIN', email: 'alice.martin@example.com' }],
+      to: [{ email: 'bob.durand@example.com' }],
+      subject: 'Old subject',
+      inReplyTo: ['orig@example.com'],
+      references: ['orig@example.com'],
+      mailboxIds: { 'mb-drafts': true },
+      keywords: { $draft: true, $seen: true },
+      textBody: [{ partId: '1', type: 'text/plain', blobId: 'x', size: 3 }],
+      htmlBody: [{ partId: '1', type: 'text/plain', blobId: 'x', size: 3 }],
+      bodyValues: { '1': { value: 'Old body', isTruncated: false } },
+      attachments: [{ blobId: 'blob-a', type: 'application/pdf', name: 'devis.pdf', size: 1000 }],
+    };
+
+    function mockDraftThen(setData: Record<string, unknown>, draft: Record<string, unknown> | null = DRAFT) {
+      vi.mocked(mockJmapClient.request)
+        .mockResolvedValueOnce({ methodResponses: [['Email/get', { list: draft ? [draft] : [] }, 'getDraft']] })
+        .mockResolvedValueOnce({ methodResponses: [['Email/set', setData, 'updateDraft']] });
+      vi.mocked(mockJmapClient.parseMethodResponse).mockImplementation((r: any) =>
+        r[0] === 'error' ? { success: false, error: r[1] } : { success: true, data: r[1] }
+      );
+    }
+    const setCall = () => vi.mocked(mockJmapClient.request).mock.calls[1][0][0];
+
+    it('replaces the draft with its new subject and body, keeping threading and attachments', async () => {
       registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
       const tool = registeredTools.get('update_draft')!;
+      mockDraftThen({ created: { draft: { id: 'draft-2' } }, destroyed: ['draft-1'] });
 
-      // Mock Email/set success response
-      const updateResponse = {
-        methodResponses: [
-          ['Email/set', { updated: { 'draft-1': { id: 'draft-1' } } }, 'updateDraft'],
-        ],
-      };
-
-      vi.mocked(mockJmapClient.request).mockResolvedValue(updateResponse);
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: { updated: { 'draft-1': { id: 'draft-1' } } },
-      });
-
-      const result = await tool.handler({
-        draftId: 'draft-1',
-        subject: 'Updated Subject',
-        body: 'Updated body text',
-      });
+      const result = await tool.handler({ draftId: 'draft-1', subject: 'Updated Subject', body: 'Updated body text' });
 
       expect(result.isError).toBeUndefined();
-      expect(result.content[0].text).toContain('success');
-      expect(result.content[0].text).toContain('draft-1');
-
-      // Verify patch syntax was used for body
-      const requestCall = vi.mocked(mockJmapClient.request).mock.calls[0][0];
-      const updateCall = requestCall[0];
-      expect(updateCall[0]).toBe('Email/set');
-      const params = updateCall[1] as Record<string, unknown>;
-      const update = params.update as Record<string, Record<string, unknown>>;
-      expect(update['draft-1']['bodyValues/1/value']).toBe('Updated body text');
-      expect(update['draft-1']['subject']).toBe('Updated Subject');
+      const out = JSON.parse(result.content[0].text);
+      expect(out).toMatchObject({ success: true, draftId: 'draft-2', previousDraftId: 'draft-1', updated: ['subject', 'body'] });
+      const [method, params] = setCall();
+      expect(method).toBe('Email/set');
+      expect(params.destroy).toEqual(['draft-1']);
+      const created = params.create.draft;
+      expect(created.subject).toBe('Updated Subject');
+      expect(created.bodyValues.text.value).toBe('Updated body text');
+      expect(created.inReplyTo).toEqual(['orig@example.com']);
+      expect(created.references).toEqual(['orig@example.com']);
+      expect(created.mailboxIds).toEqual({ 'mb-drafts': true });
+      expect(created.keywords).toEqual({ $draft: true, $seen: true });
+      expect(created.to).toEqual([{ email: 'bob.durand@example.com' }]);
+      expect(created.attachments).toEqual([{ blobId: 'blob-a', type: 'application/pdf', name: 'devis.pdf', disposition: 'attachment' }]);
     });
 
-    it('updates draft recipients', async () => {
+    it('updates draft recipients and keeps the body as it was', async () => {
       registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
       const tool = registeredTools.get('update_draft')!;
-
-      const updateResponse = {
-        methodResponses: [
-          ['Email/set', { updated: { 'draft-1': { id: 'draft-1' } } }, 'updateDraft'],
-        ],
-      };
-
-      vi.mocked(mockJmapClient.request).mockResolvedValue(updateResponse);
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: { updated: { 'draft-1': { id: 'draft-1' } } },
-      });
+      mockDraftThen({ created: { draft: { id: 'draft-2' } }, destroyed: ['draft-1'] });
 
       const result = await tool.handler({
         draftId: 'draft-1',
@@ -144,111 +150,85 @@ describe('Draft Management Tools', () => {
       });
 
       expect(result.isError).toBeUndefined();
-
-      // Verify recipients were formatted correctly
-      const requestCall = vi.mocked(mockJmapClient.request).mock.calls[0][0];
-      const updateCall = requestCall[0];
-      const params = updateCall[1] as Record<string, unknown>;
-      const update = params.update as Record<string, Record<string, unknown>>;
-      const draftUpdate = update['draft-1'];
-
-      expect(draftUpdate.to).toEqual([
-        { email: 'user1@example.com' },
-        { email: 'user2@example.com' },
-      ]);
-      expect(draftUpdate.cc).toEqual([{ email: 'cc@example.com' }]);
-      expect(draftUpdate.bcc).toEqual([{ email: 'bcc@example.com' }]);
+      const created = setCall()[1].create.draft;
+      expect(created.to).toEqual([{ email: 'user1@example.com' }, { email: 'user2@example.com' }]);
+      expect(created.cc).toEqual([{ email: 'cc@example.com' }]);
+      expect(created.bcc).toEqual([{ email: 'bcc@example.com' }]);
+      expect(created.subject).toBe('Old subject');
+      expect(created.bodyValues).toEqual({ '1': { value: 'Old body' } });
+      expect(created.textBody).toEqual([{ partId: '1', type: 'text/plain' }]);
     });
 
     it('returns error when draft not found', async () => {
       registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
       const tool = registeredTools.get('update_draft')!;
+      mockDraftThen({}, null);
 
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
-        methodResponses: [
-          ['Email/set', { notUpdated: { 'draft-1': { type: 'notFound' } } }, 'updateDraft'],
-        ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: { notUpdated: { 'draft-1': { type: 'notFound' } } },
-      });
-
-      const result = await tool.handler({
-        draftId: 'draft-1',
-        subject: 'New Subject',
-      });
+      const result = await tool.handler({ draftId: 'draft-1', subject: 'New Subject' });
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Draft not found');
+      expect(vi.mocked(mockJmapClient.request)).toHaveBeenCalledTimes(1);
+    });
+
+    it('refuses to rewrite an e-mail that is not a draft', async () => {
+      registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
+      const tool = registeredTools.get('update_draft')!;
+      mockDraftThen({}, { ...DRAFT, keywords: { $seen: true } });
+
+      const result = await tool.handler({ draftId: 'draft-1', subject: 'New Subject' });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('not a draft');
+      expect(vi.mocked(mockJmapClient.request)).toHaveBeenCalledTimes(1);
     });
 
     it('returns error when state mismatch occurs', async () => {
       registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
       const tool = registeredTools.get('update_draft')!;
+      vi.mocked(mockJmapClient.request)
+        .mockResolvedValueOnce({ methodResponses: [['Email/get', { list: [DRAFT] }, 'getDraft']] })
+        .mockResolvedValueOnce({ methodResponses: [['error', { type: 'stateMismatch' }, 'updateDraft']] });
+      vi.mocked(mockJmapClient.parseMethodResponse).mockImplementation((r: any) =>
+        r[0] === 'error' ? { success: false, error: r[1] } : { success: true, data: r[1] }
+      );
 
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
-        methodResponses: [
-          ['Email/set', { notUpdated: { 'draft-1': { type: 'stateMismatch' } } }, 'updateDraft'],
-        ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: { notUpdated: { 'draft-1': { type: 'stateMismatch' } } },
-      });
-
-      const result = await tool.handler({
-        draftId: 'draft-1',
-        subject: 'New Subject',
-        ifInState: 'old-state',
-      });
+      const result = await tool.handler({ draftId: 'draft-1', subject: 'New Subject', ifInState: 'old-state' });
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('modified by another client');
+    });
+
+    it('reports a draft the server could not create', async () => {
+      registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
+      const tool = registeredTools.get('update_draft')!;
+      mockDraftThen({ notCreated: { draft: { type: 'invalidProperties', description: 'bad' } } });
+
+      const result = await tool.handler({ draftId: 'draft-1', subject: 'x' });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('invalidProperties');
     });
 
     it('returns error when no fields to update', async () => {
       registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
       const tool = registeredTools.get('update_draft')!;
 
-      const result = await tool.handler({
-        draftId: 'draft-1',
-      });
+      const result = await tool.handler({ draftId: 'draft-1' });
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('No fields to update');
-
-      // Should not make API call
-      expect(mockJmapClient.request).not.toHaveBeenCalled();
+      expect(vi.mocked(mockJmapClient.request)).not.toHaveBeenCalled();
     });
 
     it('supports optional ifInState parameter', async () => {
       registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
       const tool = registeredTools.get('update_draft')!;
+      mockDraftThen({ created: { draft: { id: 'draft-2' } }, destroyed: ['draft-1'] });
 
-      const updateResponse = {
-        methodResponses: [
-          ['Email/set', { updated: { 'draft-1': { id: 'draft-1' } } }, 'updateDraft'],
-        ],
-      };
+      await tool.handler({ draftId: 'draft-1', subject: 'New Subject', ifInState: 'state-123' });
 
-      vi.mocked(mockJmapClient.request).mockResolvedValue(updateResponse);
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: { updated: { 'draft-1': { id: 'draft-1' } } },
-      });
-
-      await tool.handler({
-        draftId: 'draft-1',
-        subject: 'New Subject',
-        ifInState: 'state-123',
-      });
-
-      // Verify ifInState was included in request
-      const requestCall = vi.mocked(mockJmapClient.request).mock.calls[0][0];
-      const updateCall = requestCall[0];
-      const params = updateCall[1] as Record<string, unknown>;
-      expect(params.ifInState).toBe('state-123');
+      expect(setCall()[1].ifInState).toBe('state-123');
     });
   });
 

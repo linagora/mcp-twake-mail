@@ -10,6 +10,7 @@ import type { Logger } from '../../config/logger.js';
 import { transformMailbox } from '../../transformers/mailbox.js';
 import type { SimplifiedMailbox } from '../../types/dto.js';
 import type { MailboxSetResponse } from '../../types/jmap.js';
+import { approverFor } from '../approval.js';
 
 /** Properties to fetch for mailbox operations */
 const MAILBOX_PROPERTIES = [
@@ -262,6 +263,8 @@ export function registerMailboxTools(
     },
     async ({ name, parentId }) => {
       logger.debug({ name, parentId }, 'create_mailbox called');
+      const refused = await approverFor(server).gate('create_mailbox', async () => ({ action: 'create_mailbox', details: [['name', name], ['parent', parentId ? await approverFor(server).mailbox(jmapClient, parentId) : undefined]] }));
+      if (refused) return refused;
 
       try {
         const session = jmapClient.getSession();
@@ -392,6 +395,8 @@ export function registerMailboxTools(
     },
     async ({ mailboxId, newName }) => {
       logger.debug({ mailboxId, newName }, 'rename_mailbox called');
+      const refused = await approverFor(server).gate('rename_mailbox', async () => ({ action: 'rename_mailbox', details: [['mailbox', `${await approverFor(server).mailbox(jmapClient, mailboxId)} → ${newName}`]] }));
+      if (refused) return refused;
 
       try {
         const session = jmapClient.getSession();
@@ -579,6 +584,8 @@ export function registerMailboxTools(
     },
     async ({ mailboxId, force }) => {
       logger.debug({ mailboxId, force }, 'delete_mailbox called');
+      const refused = await approverFor(server).gate('delete_mailbox', async () => ({ action: 'delete_mailbox', details: [['mailbox', await approverFor(server).mailbox(jmapClient, mailboxId)], ['contents', force ? 'force' : undefined]] }));
+      if (refused) return refused;
 
       try {
         const session = jmapClient.getSession();

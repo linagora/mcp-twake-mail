@@ -14,6 +14,7 @@ import type {
   EmailSubmissionSetResponse,
 } from '../../types/jmap.js';
 import type { SignatureContent } from '../../signature/index.js';
+import { approverFor } from '../approval.js';
 
 /**
  * Annotations for send operations (not idempotent - each call sends a new email).
@@ -247,6 +248,8 @@ export function registerEmailSendingTools(
         }
 
         // Step 5: Create email and submit in single batch
+        const refused = await approverFor(server).gate('send_email', async () => ({ action: 'send_email', details: approverFor(server).message(emailCreate) }));
+        if (refused) return refused;
         const sendResponse = await jmapClient.request(
           [
             [
@@ -680,6 +683,8 @@ export function registerEmailSendingTools(
         }
 
         // Step 8: Create email and submit in single batch
+        const refused = await approverFor(server).gate('reply_email', async () => ({ action: 'reply_email', details: [['in_reply_to', [original.from?.[0] ? (original.from[0].name ? `${original.from[0].name} <${original.from[0].email}>` : original.from[0].email) : undefined, original.subject].filter(Boolean).join(' · ')], ...approverFor(server).message(emailCreate)] }));
+        if (refused) return refused;
         const sendResponse = await jmapClient.request(
           [
             [
@@ -1129,6 +1134,8 @@ ${originalHtmlBody || `<p>${escapeHtml(originalTextBody).replace(/\n/g, '<br/>')
         }
 
         // Step 8: Create email and submit in single batch
+        const refused = await approverFor(server).gate('forward_email', async () => ({ action: 'forward_email', details: [['email', [original.from?.[0] ? (original.from[0].name ? `${original.from[0].name} <${original.from[0].email}>` : original.from[0].email) : undefined, original.subject].filter(Boolean).join(' · ')], ...approverFor(server).message(emailCreate)] }));
+        if (refused) return refused;
         const sendResponse = await jmapClient.request(
           [
             [
