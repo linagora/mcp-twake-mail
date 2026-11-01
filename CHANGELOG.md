@@ -4,6 +4,18 @@ All notable changes to mcp-twake-mail are documented here. The format follows [K
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-11-01
+
+### Breaking
+- OIDC redirect URIs must be loopback addresses with an explicit port (`http://localhost:<port>/callback`, `127.0.0.1` or `[::1]`, RFC 8252). Remote redirect URIs (ngrok tunnels) and `JMAP_OIDC_LOCAL_PORT` are no longer supported; the configuration reports them explicitly.
+
+### Changed
+- oauth-callback 3: the callback listener binds the redirect URI of the authorization request and checks its `state`; the code is exchanged on that exact redirect URI.
+- Dependencies: openid-client 6.8.8, commander 15, @inquirer/prompts 8.7.5, open 11.0.4, eslint 10, vitest 5, @types/node 26; CI actions v7.
+
+### Fixed
+- The server and the CLI reported a stale hard-coded version (0.1.0): they now read package.json.
+
 ## [2.1.0] - 2026-10-31
 
 ### Added

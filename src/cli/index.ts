@@ -2,11 +2,11 @@
  * CLI entry point using Commander.js.
  * Routes between MCP server (default) and interactive commands.
  */
+import { VERSION } from '../version.js';
 import { Command } from 'commander';
 import { startServer } from '../mcp/server.js';
 
 // Read version from package.json at runtime to stay in sync
-const VERSION = '0.1.0'; // Match package.json
 
 /**
  * Create and configure the CLI program.

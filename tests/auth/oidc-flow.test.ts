@@ -125,7 +125,8 @@ describe('oidc-flow', () => {
 
       mockGetAuthCode.mockResolvedValue({
         code: 'authorization-code',
-        params: { state: 'test-state' },
+        redirectUri: 'http://localhost:3000/callback',
+        params: new URLSearchParams({ state: 'test-state' }),
       });
 
       mockAuthorizationCodeGrant.mockResolvedValue({
@@ -165,9 +166,8 @@ describe('oidc-flow', () => {
 
       // Verify browser was launched
       expect(mockGetAuthCode).toHaveBeenCalledWith(
+        'https://auth.example.com/authorize?client_id=test',
         expect.objectContaining({
-          port: 3000,
-          authorizationUrl: 'https://auth.example.com/authorize?client_id=test',
           launch: expect.any(Function),
           timeout: 120000,
         })
@@ -202,7 +202,8 @@ describe('oidc-flow', () => {
 
       mockGetAuthCode.mockResolvedValue({
         code: 'authorization-code',
-        params: { state: 'test-state' },
+        redirectUri: 'http://localhost:3000/callback',
+        params: new URLSearchParams({ state: 'test-state' }),
       });
 
       mockAuthorizationCodeGrant.mockResolvedValue({
@@ -249,7 +250,8 @@ describe('oidc-flow', () => {
       // Return a different state than expected
       mockGetAuthCode.mockResolvedValue({
         code: 'authorization-code',
-        params: { state: 'wrong-state' },
+        redirectUri: 'http://localhost:3000/callback',
+        params: new URLSearchParams({ state: 'wrong-state' }),
       });
 
       await expect(performOIDCFlow(defaultOptions)).rejects.toMatchObject({
@@ -264,7 +266,8 @@ describe('oidc-flow', () => {
 
       mockGetAuthCode.mockResolvedValue({
         code: 'authorization-code',
-        params: { state: 'test-state' },
+        redirectUri: 'http://localhost:3000/callback',
+        params: new URLSearchParams({ state: 'test-state' }),
       });
 
       mockAuthorizationCodeGrant.mockRejectedValue(new Error('Token exchange failed'));
@@ -281,7 +284,8 @@ describe('oidc-flow', () => {
 
       mockGetAuthCode.mockResolvedValue({
         code: 'authorization-code',
-        params: { state: 'test-state' },
+        redirectUri: 'http://localhost:3000/callback',
+        params: new URLSearchParams({ state: 'test-state' }),
       });
 
       // Response without refresh_token, id_token, or expires_in
@@ -299,88 +303,39 @@ describe('oidc-flow', () => {
       });
     });
 
-    it('uses port 3000 for ngrok URLs (remote without explicit port)', async () => {
-      const mockConfig = { serverMetadata: () => ({}) };
-      mockDiscovery.mockResolvedValue(mockConfig);
-
-      mockGetAuthCode.mockResolvedValue({
-        code: 'authorization-code',
-        params: { state: 'test-state' },
-      });
-
-      mockAuthorizationCodeGrant.mockResolvedValue({
-        access_token: 'access-token',
-        expires_in: 3600,
-      });
-
-      // Use ngrok URL without explicit port
-      await performOIDCFlow({
-        ...defaultOptions,
-        redirectUri: 'https://pretty-vaguely-beagle.ngrok-free.app/callback',
-      });
-
-      // Should use default port 3000 for remote URLs
-      expect(mockGetAuthCode).toHaveBeenCalledWith(
-        expect.objectContaining({
-          port: 3000,
-        })
-      );
+    it('refuses a remote redirect URI (loopback only, RFC 8252)', async () => {
+      await expect(
+        performOIDCFlow({ ...defaultOptions, redirectUri: 'https://pretty-vaguely-beagle.ngrok-free.app/callback' })
+      ).rejects.toThrow(/loopback/);
+      expect(mockDiscovery).not.toHaveBeenCalled();
+      expect(mockGetAuthCode).not.toHaveBeenCalled();
     });
 
-    it('uses explicit port from localhost URL', async () => {
-      const mockConfig = { serverMetadata: () => ({}) };
-      mockDiscovery.mockResolvedValue(mockConfig);
-
-      mockGetAuthCode.mockResolvedValue({
-        code: 'authorization-code',
-        params: { state: 'test-state' },
-      });
-
-      mockAuthorizationCodeGrant.mockResolvedValue({
-        access_token: 'access-token',
-        expires_in: 3600,
-      });
-
-      // Use localhost URL with explicit port
-      await performOIDCFlow({
-        ...defaultOptions,
-        redirectUri: 'http://localhost:8080/callback',
-      });
-
-      // Should use explicit port
-      expect(mockGetAuthCode).toHaveBeenCalledWith(
-        expect.objectContaining({
-          port: 8080,
-        })
-      );
+    it('refuses a loopback redirect URI without an explicit port', async () => {
+      await expect(performOIDCFlow({ ...defaultOptions, redirectUri: 'http://localhost/callback' })).rejects.toThrow(/port/);
+      expect(mockGetAuthCode).not.toHaveBeenCalled();
     });
 
-    it('uses port 80 for localhost http URL without explicit port', async () => {
-      const mockConfig = { serverMetadata: () => ({}) };
-      mockDiscovery.mockResolvedValue(mockConfig);
+    it('accepts 127.0.0.1 and [::1] with a port, and exchanges the code on the exact redirect URI', async () => {
+      mockDiscovery.mockResolvedValue({ serverMetadata: () => ({}) });
+      mockGetAuthCode.mockResolvedValue({
+        code: 'authorization-code',
+        redirectUri: 'http://127.0.0.1:8080/callback',
+        params: new URLSearchParams({ state: 'test-state' }),
+      });
+      mockAuthorizationCodeGrant.mockResolvedValue({ access_token: 'access-token', expires_in: 3600 });
+
+      await performOIDCFlow({ ...defaultOptions, redirectUri: 'http://127.0.0.1:8080/callback' });
+      const callbackUrl = mockAuthorizationCodeGrant.mock.calls[0][1] as URL;
+      expect(callbackUrl.origin + callbackUrl.pathname).toBe('http://127.0.0.1:8080/callback');
+      expect(callbackUrl.searchParams.get('code')).toBe('authorization-code');
 
       mockGetAuthCode.mockResolvedValue({
         code: 'authorization-code',
-        params: { state: 'test-state' },
+        redirectUri: 'http://[::1]:8080/callback',
+        params: new URLSearchParams({ state: 'test-state' }),
       });
-
-      mockAuthorizationCodeGrant.mockResolvedValue({
-        access_token: 'access-token',
-        expires_in: 3600,
-      });
-
-      // Use localhost URL without explicit port
-      await performOIDCFlow({
-        ...defaultOptions,
-        redirectUri: 'http://localhost/callback',
-      });
-
-      // Should use protocol default port 80
-      expect(mockGetAuthCode).toHaveBeenCalledWith(
-        expect.objectContaining({
-          port: 80,
-        })
-      );
+      await expect(performOIDCFlow({ ...defaultOptions, redirectUri: 'http://[::1]:8080/callback' })).resolves.toBeDefined();
     });
   });
 

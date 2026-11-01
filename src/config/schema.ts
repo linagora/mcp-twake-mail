@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { loopbackRedirectProblem } from '../auth/redirect-uri.js';
 
 export const envSchema = z
   .object({
@@ -30,9 +31,16 @@ export const envSchema = z
     JMAP_OIDC_CLIENT_ID: z.string().optional(),
     JMAP_OIDC_SCOPE: z.string().default('openid email offline_access'),
     // Redirect URI for OIDC - must be registered with the provider
-    JMAP_OIDC_REDIRECT_URI: z.string().url().default('http://localhost:3000/callback'),
-    // Local port for OIDC callback server (useful when redirect URI is remote like ngrok)
-    JMAP_OIDC_LOCAL_PORT: z.coerce.number().optional(),
+    // Loopback only (RFC 8252): the callback is received on this machine
+    JMAP_OIDC_REDIRECT_URI: z
+      .string()
+      .default('http://localhost:3000/callback')
+      .superRefine((uri, ctx) => {
+        const problem = loopbackRedirectProblem(uri);
+        if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: problem });
+      }),
+    // Removed in 3.0.0 (it served remote redirect URIs); kept only to report it clearly
+    JMAP_OIDC_LOCAL_PORT: z.string().optional(),
     JMAP_REQUEST_TIMEOUT: z.coerce.number().default(30000),
     LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
     // Email identity and signature configuration
@@ -40,6 +48,13 @@ export const envSchema = z
     JMAP_SIGNATURE_PATH: z.string().optional(),
   })
   .superRefine((data, ctx) => {
+    if (data.JMAP_OIDC_LOCAL_PORT !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['JMAP_OIDC_LOCAL_PORT'],
+        message: 'JMAP_OIDC_LOCAL_PORT is no longer supported: put the port in JMAP_OIDC_REDIRECT_URI (http://localhost:<port>/callback)',
+      });
+    }
     // Conditional validation: basic auth requires username+password
     if (data.JMAP_AUTH_METHOD === 'basic') {
       if (!data.JMAP_USERNAME) {

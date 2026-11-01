@@ -2,6 +2,7 @@
  * MCP server for JMAP mail operations.
  * Uses stdio transport for AI assistant communication.
  */
+import { VERSION } from '../version.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { loadConfig, type Config } from '../config/schema.js';
@@ -12,7 +13,7 @@ import { registerAllTools } from './tools/index.js';
 import { loadSignature, type SignatureContent } from '../signature/index.js';
 
 /** Server version (matches package.json) */
-const SERVER_VERSION = '0.1.0';
+const SERVER_VERSION = VERSION;
 
 /** Server name for MCP identification */
 const SERVER_NAME = 'mcp-twake-mail';

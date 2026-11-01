@@ -77,13 +77,10 @@ The default redirect URI is `http://localhost:3000/callback`.
 
 You can customize this with `JMAP_OIDC_REDIRECT_URI`, but it must:
 - Match exactly what's registered in your OIDC provider
-- Be accessible on your local machine during authentication
-- Use HTTP for localhost (HTTPS not required)
+- Be a loopback address with an explicit port: `http://localhost:<port>/…`, `http://127.0.0.1:<port>/…` or `http://[::1]:<port>/…` (RFC 8252 §7.3)
+- Use plain HTTP (the callback never leaves your machine)
 
-For remote development (e.g., via ngrok), use the full ngrok URL:
-```
-JMAP_OIDC_REDIRECT_URI=https://abc123.ngrok.io/callback
-```
+Remote redirect URIs (ngrok tunnels and the like) and `JMAP_OIDC_LOCAL_PORT` are no longer supported since 3.0.0. On a remote machine without a browser, run the authentication on your own computer, or use `JMAP_AUTH_METHOD=command` with a token broker.
 
 ## Claude Desktop Configuration
 

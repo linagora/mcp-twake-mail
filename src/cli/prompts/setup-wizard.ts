@@ -2,6 +2,7 @@
  * Interactive prompts for setup wizard.
  * Uses @inquirer/prompts for modern, TypeScript-first prompts.
  */
+import { loopbackRedirectProblem } from '../../auth/redirect-uri.js';
 import { input, select, password, confirm } from '@inquirer/prompts';
 import { homedir } from 'node:os';
 import { access, constants } from 'node:fs/promises';
@@ -70,14 +71,7 @@ export async function promptConfirmDiscovery(settings: {
   const jmapUrl = await input({
     message: 'JMAP Session URL:',
     default: settings.jmapUrl,
-    validate: (value) => {
-      try {
-        new URL(value);
-        return true;
-      } catch {
-        return 'Please enter a valid URL';
-      }
-    },
+    validate: (value) => loopbackRedirectProblem(value) ?? true,
   });
 
   const oidcIssuer = settings.oidcIssuer
@@ -193,7 +187,7 @@ export async function promptOidcAuth(defaultIssuer?: string): Promise<{
   });
 
   const redirectUri = await input({
-    message: 'OAuth Redirect URI (registered with OIDC provider):',
+    message: 'OAuth Redirect URI (loopback with a port, registered with the OIDC provider):',
     default: 'http://localhost:3000/callback',
     validate: (value) => {
       try {

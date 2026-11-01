@@ -117,7 +117,7 @@ The server is configured through environment variables, usually set in your MCP 
 |---|---|
 | **Basic** (default) | `JMAP_SESSION_URL`, `JMAP_USERNAME`, `JMAP_PASSWORD` |
 | **Bearer** | `JMAP_SESSION_URL`, `JMAP_AUTH_METHOD=bearer`, `JMAP_TOKEN` |
-| **OIDC** (PKCE S256) | `JMAP_SESSION_URL`, `JMAP_AUTH_METHOD=oidc`, `JMAP_OIDC_ISSUER`, `JMAP_OIDC_CLIENT_ID`, optional `JMAP_OIDC_SCOPE` (default `openid profile email offline_access`), `JMAP_OIDC_REDIRECT_URI`, `JMAP_OIDC_LOCAL_PORT` |
+| **OIDC** (PKCE S256) | `JMAP_SESSION_URL`, `JMAP_AUTH_METHOD=oidc`, `JMAP_OIDC_ISSUER`, `JMAP_OIDC_CLIENT_ID`, optional `JMAP_OIDC_SCOPE` (default `openid profile email offline_access`), `JMAP_OIDC_REDIRECT_URI` (loopback with a port, default `http://localhost:3000/callback`) |
 | **Token command** | `JMAP_SESSION_URL`, `JMAP_AUTH_METHOD=command`, `JMAP_TOKEN_COMMAND` |
 
 With **token command**, the server runs `JMAP_TOKEN_COMMAND` to get an access token, either raw on stdout or as JSON `{"access_token": "...", "expires_at": <epoch seconds>}`, and runs it again shortly before expiry. A single broker you control can then own the OIDC grant (and its refresh-token rotation) for several tools, and long-lived secrets stay out of the MCP client configuration.
