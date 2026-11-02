@@ -15,7 +15,7 @@ import { tmpdir } from 'os';
 import { basename, join } from 'path';
 import { registerAttachmentTools, isInlineAttachment } from './attachment.js';
 import { setApprover } from '../approval.js';
-import type { JMAPClient } from '../../jmap/client.js';
+import { createFakeJmap, type FakeJmap } from '../../testing/fake-jmap.js';
 import type { Logger } from '../../config/logger.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
@@ -61,11 +61,11 @@ describe('isInlineAttachment', () => {
 
 describe('registerAttachmentTools', () => {
   let mockServer: McpServer;
-  let mockJmapClient: JMAPClient;
+  let mockJmapClient: FakeJmap;
   let mockLogger: Logger;
   let registeredTools: Map<string, ToolHandler>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     registeredTools = new Map();
 
     // Mock MCP server
@@ -76,12 +76,7 @@ describe('registerAttachmentTools', () => {
     } as unknown as McpServer;
 
     // Mock JMAP client
-    mockJmapClient = {
-      getSession: vi.fn(() => ({ accountId: 'account-1', apiUrl: 'https://jmap.example.com/api' })),
-      request: vi.fn(),
-      parseMethodResponse: vi.fn(),
-      downloadBlob: vi.fn(),
-    } as unknown as JMAPClient;
+    mockJmapClient = await createFakeJmap();
 
     // Mock logger (silent)
     mockLogger = {
@@ -93,7 +88,7 @@ describe('registerAttachmentTools', () => {
 
     // Register all tools
     setApprover(mockServer, { mode: 'client', language: 'en', timeoutMs: 1000 });
-    registerAttachmentTools(mockServer, mockJmapClient, mockLogger);
+    registerAttachmentTools(mockServer, mockJmapClient.client, mockLogger);
   });
 
   describe('get_attachments', () => {
@@ -140,43 +135,6 @@ describe('registerAttachmentTools', () => {
           ],
         ],
       });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: {
-          accountId: 'account-1',
-          list: [
-            {
-              id: 'email-1',
-              attachments: [
-                {
-                  blobId: 'blob-1',
-                  name: 'document.pdf',
-                  type: 'application/pdf',
-                  size: 102400,
-                  disposition: 'attachment',
-                  cid: null,
-                },
-                {
-                  blobId: 'blob-2',
-                  name: 'logo.png',
-                  type: 'image/png',
-                  size: 5120,
-                  disposition: 'inline',
-                  cid: 'logo123',
-                },
-                {
-                  blobId: 'blob-3',
-                  name: 'photo.jpg',
-                  type: 'image/jpeg',
-                  size: 25600,
-                  disposition: null,
-                  cid: null,
-                },
-              ],
-            },
-          ],
-        },
-      });
 
       const handler = registeredTools.get('get_attachments')!;
       const result = await handler({ emailId: 'email-1' });
@@ -207,13 +165,6 @@ describe('registerAttachmentTools', () => {
           ],
         ],
       });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: {
-          accountId: 'account-1',
-          list: [{ id: 'email-1', attachments: [] }],
-        },
-      });
 
       const handler = registeredTools.get('get_attachments')!;
       const result = await handler({ emailId: 'email-1' });
@@ -237,13 +188,6 @@ describe('registerAttachmentTools', () => {
             'getAttachments',
           ],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: {
-          accountId: 'account-1',
-          list: [{ id: 'email-1' }],
-        },
       });
 
       const handler = registeredTools.get('get_attachments')!;
@@ -269,14 +213,6 @@ describe('registerAttachmentTools', () => {
           ],
         ],
       });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: {
-          accountId: 'account-1',
-          list: [],
-          notFound: ['email-999'],
-        },
-      });
 
       const handler = registeredTools.get('get_attachments')!;
       const result = await handler({ emailId: 'email-999' });
@@ -288,10 +224,6 @@ describe('registerAttachmentTools', () => {
     it('returns error on JMAP method error', async () => {
       vi.mocked(mockJmapClient.request).mockResolvedValue({
         methodResponses: [['error', { type: 'serverError', description: 'Internal error' }, 'getAttachments']],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: false,
-        error: { type: 'serverError', description: 'Internal error' },
       });
 
       const handler = registeredTools.get('get_attachments')!;
@@ -338,35 +270,6 @@ describe('registerAttachmentTools', () => {
             'getAttachments',
           ],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: {
-          accountId: 'account-1',
-          list: [
-            {
-              id: 'email-1',
-              attachments: [
-                {
-                  blobId: 'blob-1',
-                  name: 'document.pdf',
-                  type: 'application/pdf',
-                  size: 102400,
-                  disposition: 'attachment',
-                  cid: null,
-                },
-                {
-                  blobId: 'blob-2',
-                  name: 'inline-image.png',
-                  type: 'image/png',
-                  size: 5120,
-                  disposition: 'inline',
-                  cid: 'img123',
-                },
-              ],
-            },
-          ],
-        },
       });
     });
 
@@ -415,23 +318,6 @@ describe('registerAttachmentTools', () => {
             'getAttachments',
           ],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: {
-          accountId: 'account-1',
-          list: [
-            {
-              id: 'email-1',
-              attachments: [
-                { blobId: 'blob-1', name: 'doc.pdf', type: 'application/pdf', size: 1000 },
-                { blobId: 'blob-2', name: 'photo.jpg', type: 'image/jpeg', size: 2000 },
-                { blobId: 'blob-3', name: 'logo.png', type: 'image/png', size: 3000 },
-                { blobId: 'blob-4', name: 'data.xlsx', type: 'application/vnd.ms-excel', size: 4000 },
-              ],
-            },
-          ],
-        },
       });
     });
 
@@ -488,22 +374,6 @@ describe('registerAttachmentTools', () => {
           ],
         ],
       });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: {
-          accountId: 'account-1',
-          list: [
-            {
-              id: 'email-1',
-              attachments: [
-                { blobId: 'blob-1', name: 'doc.pdf', type: 'application/pdf', size: 1000 },
-                { blobId: 'blob-2', name: 'inline-logo.png', type: 'image/png', size: 2000, cid: 'logo', disposition: 'inline' },
-                { blobId: 'blob-3', name: 'attached-photo.jpg', type: 'image/jpeg', size: 3000 },
-              ],
-            },
-          ],
-        },
-      });
 
       const handler = registeredTools.get('get_attachments')!;
       const result = await handler({ emailId: 'email-1', excludeInline: true, mimeTypeFilter: 'image/' });
@@ -528,7 +398,7 @@ describe('registerAttachmentTools', () => {
     beforeEach(() => {
       home = mkdtempSync(join(tmpdir(), 'attachment-test-'));
       process.env.HOME = home;
-      vi.mocked(mockJmapClient.downloadBlob).mockImplementation(async () => new ArrayBuffer(size));
+      mockJmapClient.serveBlob.mockImplementation(async () => new ArrayBuffer(size));
     });
 
     afterEach(() => {
@@ -536,13 +406,19 @@ describe('registerAttachmentTools', () => {
       rmSync(home, { recursive: true, force: true });
     });
 
-    it('returns a small blob inline', async () => {
-      vi.mocked(mockJmapClient.downloadBlob).mockResolvedValue(new TextEncoder().encode('hello').buffer as ArrayBuffer);
+    it('returns a small blob inline, downloaded with the default name and type', async () => {
+      mockJmapClient.serveBlob.mockResolvedValue(new TextEncoder().encode('hello').buffer as ArrayBuffer);
 
       const result = await download({});
 
-      expect(mockJmapClient.downloadBlob).toHaveBeenCalledWith('blob-1', 'attachment', undefined);
-      expect(JSON.parse(result.content[0].text).data).toBe(Buffer.from('hello').toString('base64'));
+      expect(mockJmapClient.serveBlob).toHaveBeenCalledWith('blob-1', 'attachment', 'application/octet-stream');
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        blobId: 'blob-1',
+        name: 'attachment',
+        mimeType: 'application/octet-stream',
+        size: 5,
+        data: Buffer.from('hello').toString('base64'),
+      });
       expect(existsSync(join(home, 'Downloads'))).toBe(false);
     });
 
@@ -615,7 +491,7 @@ describe('registerAttachmentTools', () => {
       const result = await download({ name });
 
       expect(result.isError).toBe(true);
-      expect(mockJmapClient.downloadBlob).not.toHaveBeenCalled();
+      expect(mockJmapClient.serveBlob).not.toHaveBeenCalled();
     });
 
     it('declares that it writes', () => {
@@ -627,6 +503,15 @@ describe('registerAttachmentTools', () => {
       expect(config.annotations.readOnlyHint).toBe(false);
       expect(config.annotations.destructiveHint).toBe(false);
       expect(config.inputSchema).not.toHaveProperty('saveToPath');
+    });
+
+    it('reports a failed download', async () => {
+      mockJmapClient.serveBlob.mockRejectedValue(new Error('boom'));
+
+      const result = await registeredTools.get('download_attachment')!({ blobId: 'blob-1' });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toBe('Error downloading attachment: boom');
     });
   });
 

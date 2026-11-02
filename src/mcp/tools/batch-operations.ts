@@ -6,9 +6,8 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
-import type { JMAPClient } from '../../jmap/client.js';
+import type { Email, JmapClient, PatchObject, SetError } from 'jmap-client-ts';
 import type { Logger } from '../../config/logger.js';
-import type { EmailSetResponse } from '../../types/jmap.js';
 import { approverFor } from '../approval.js';
 
 /**
@@ -53,8 +52,8 @@ const BATCH_DESTRUCTIVE_ANNOTATIONS: ToolAnnotations = {
  */
 function buildBatchResult(
   emailIds: string[],
-  updated: Record<string, unknown> | undefined,
-  notUpdated: Record<string, { type: string; description?: string }> | undefined
+  updated: Record<string, unknown> | null | undefined,
+  notUpdated: Record<string, SetError> | null | undefined
 ): BatchOperationResult {
   const succeededIds = Object.keys(updated || {});
   const failedEntries: Array<{ emailId: string; error: string }> = [];
@@ -86,8 +85,8 @@ function buildBatchResult(
  */
 function buildBatchDestroyResult(
   emailIds: string[],
-  destroyed: string[] | undefined,
-  notDestroyed: Record<string, { type: string; description?: string }> | undefined
+  destroyed: string[] | null | undefined,
+  notDestroyed: Record<string, SetError> | null | undefined
 ): BatchOperationResult {
   const succeededIds = destroyed || [];
   const failedEntries: Array<{ emailId: string; error: string }> = [];
@@ -119,7 +118,7 @@ function buildBatchDestroyResult(
  */
 export function registerBatchOperationTools(
   server: McpServer,
-  jmapClient: JMAPClient,
+  jmapClient: JmapClient,
   logger: Logger
 ): void {
   // batch_mark_read - set $seen keyword on multiple emails
@@ -143,40 +142,32 @@ export function registerBatchOperationTools(
       if (refused) return refused;
 
       try {
-        const session = jmapClient.getSession();
+        const accountId = jmapClient.getPrimaryAccountId();
 
         // Build update map for all emails
-        const updateMap: Record<string, Record<string, unknown>> = {};
+        const updateMap: Record<string, PatchObject<Email>> = {};
         for (const emailId of emailIds) {
           updateMap[emailId] = { 'keywords/$seen': true };
         }
 
-        const response = await jmapClient.request([
-          [
-            'Email/set',
-            {
-              accountId: session.accountId,
-              update: updateMap,
-            },
-            'batchMarkRead',
-          ],
+        const [result] = await jmapClient.requestSettled((b) => [
+          b.call('Email/set', { accountId, update: updateMap }),
         ]);
 
-        const result = jmapClient.parseMethodResponse(response.methodResponses[0]);
-        if (!result.success) {
+        if (!result.ok) {
           logger.error({ error: result.error, emailIds }, 'JMAP error in batch_mark_read');
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
-                text: `Failed to batch mark emails as read: ${result.error?.description || result.error?.type || 'Unknown error'}`,
+                text: `Failed to batch mark emails as read: ${result.error.description || result.error.type}`,
               },
             ],
           };
         }
 
-        const setResponse = result.data as unknown as EmailSetResponse;
+        const setResponse = result.value;
         const batchResult = buildBatchResult(emailIds, setResponse.updated, setResponse.notUpdated);
 
         logger.debug(
@@ -228,40 +219,32 @@ export function registerBatchOperationTools(
       if (refused) return refused;
 
       try {
-        const session = jmapClient.getSession();
+        const accountId = jmapClient.getPrimaryAccountId();
 
         // Build update map for all emails
-        const updateMap: Record<string, Record<string, unknown>> = {};
+        const updateMap: Record<string, PatchObject<Email>> = {};
         for (const emailId of emailIds) {
           updateMap[emailId] = { 'keywords/$seen': null };
         }
 
-        const response = await jmapClient.request([
-          [
-            'Email/set',
-            {
-              accountId: session.accountId,
-              update: updateMap,
-            },
-            'batchMarkUnread',
-          ],
+        const [result] = await jmapClient.requestSettled((b) => [
+          b.call('Email/set', { accountId, update: updateMap }),
         ]);
 
-        const result = jmapClient.parseMethodResponse(response.methodResponses[0]);
-        if (!result.success) {
+        if (!result.ok) {
           logger.error({ error: result.error, emailIds }, 'JMAP error in batch_mark_unread');
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
-                text: `Failed to batch mark emails as unread: ${result.error?.description || result.error?.type || 'Unknown error'}`,
+                text: `Failed to batch mark emails as unread: ${result.error.description || result.error.type}`,
               },
             ],
           };
         }
 
-        const setResponse = result.data as unknown as EmailSetResponse;
+        const setResponse = result.value;
         const batchResult = buildBatchResult(emailIds, setResponse.updated, setResponse.notUpdated);
 
         logger.debug(
@@ -318,40 +301,32 @@ export function registerBatchOperationTools(
       if (refused) return refused;
 
       try {
-        const session = jmapClient.getSession();
+        const accountId = jmapClient.getPrimaryAccountId();
 
         // Build update map for all emails
-        const updateMap: Record<string, Record<string, unknown>> = {};
+        const updateMap: Record<string, PatchObject<Email>> = {};
         for (const emailId of emailIds) {
           updateMap[emailId] = { mailboxIds: { [targetMailboxId]: true } };
         }
 
-        const response = await jmapClient.request([
-          [
-            'Email/set',
-            {
-              accountId: session.accountId,
-              update: updateMap,
-            },
-            'batchMove',
-          ],
+        const [result] = await jmapClient.requestSettled((b) => [
+          b.call('Email/set', { accountId, update: updateMap }),
         ]);
 
-        const result = jmapClient.parseMethodResponse(response.methodResponses[0]);
-        if (!result.success) {
+        if (!result.ok) {
           logger.error({ error: result.error, emailIds }, 'JMAP error in batch_move');
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
-                text: `Failed to batch move emails: ${result.error?.description || result.error?.type || 'Unknown error'}`,
+                text: `Failed to batch move emails: ${result.error.description || result.error.type}`,
               },
             ],
           };
         }
 
-        const setResponse = result.data as unknown as EmailSetResponse;
+        const setResponse = result.value;
         const batchResult = buildBatchResult(emailIds, setResponse.updated, setResponse.notUpdated);
 
         logger.debug(
@@ -411,39 +386,28 @@ export function registerBatchOperationTools(
       if (refused) return refused;
 
       try {
-        const session = jmapClient.getSession();
+        const accountId = jmapClient.getPrimaryAccountId();
 
         if (permanent) {
           // Permanent delete using destroy
-          const response = await jmapClient.request([
-            [
-              'Email/set',
-              {
-                accountId: session.accountId,
-                destroy: emailIds,
-              },
-              'batchDestroy',
-            ],
+          const [result] = await jmapClient.requestSettled((b) => [
+            b.call('Email/set', { accountId, destroy: emailIds }),
           ]);
 
-          const result = jmapClient.parseMethodResponse(response.methodResponses[0]);
-          if (!result.success) {
+          if (!result.ok) {
             logger.error({ error: result.error, emailIds }, 'JMAP error in batch_delete (permanent)');
             return {
               isError: true,
               content: [
                 {
                   type: 'text' as const,
-                  text: `Failed to batch delete emails: ${result.error?.description || result.error?.type || 'Unknown error'}`,
+                  text: `Failed to batch delete emails: ${result.error.description || result.error.type}`,
                 },
               ],
             };
           }
 
-          const setResponse = result.data as unknown as EmailSetResponse & {
-            destroyed?: string[];
-            notDestroyed?: Record<string, { type: string; description?: string }>;
-          };
+          const setResponse = result.value;
           const batchResult = buildBatchDestroyResult(
             emailIds,
             setResponse.destroyed,
@@ -465,19 +429,11 @@ export function registerBatchOperationTools(
           };
         } else {
           // Move to Trash - query Trash mailbox ONCE
-          const mailboxResponse = await jmapClient.request([
-            [
-              'Mailbox/query',
-              {
-                accountId: session.accountId,
-                filter: { role: 'trash' },
-              },
-              'findTrash',
-            ],
+          const [queryResult] = await jmapClient.requestSettled((b) => [
+            b.call('Mailbox/query', { accountId, filter: { role: 'trash' } }),
           ]);
 
-          const queryResult = jmapClient.parseMethodResponse(mailboxResponse.methodResponses[0]);
-          if (!queryResult.success) {
+          if (!queryResult.ok) {
             logger.error({ error: queryResult.error }, 'JMAP error finding Trash mailbox');
             return {
               isError: true,
@@ -490,24 +446,16 @@ export function registerBatchOperationTools(
             };
           }
 
-          const trashIds = (queryResult.data as { ids: string[] }).ids;
+          const trashIds = queryResult.value.ids;
           if (!trashIds || trashIds.length === 0) {
             // No Trash mailbox found - fall back to permanent delete
             logger.warn({ emailIds }, 'No Trash mailbox found, performing permanent delete');
 
-            const destroyResponse = await jmapClient.request([
-              [
-                'Email/set',
-                {
-                  accountId: session.accountId,
-                  destroy: emailIds,
-                },
-                'batchDestroyFallback',
-              ],
+            const [destroyResult] = await jmapClient.requestSettled((b) => [
+              b.call('Email/set', { accountId, destroy: emailIds }),
             ]);
 
-            const destroyResult = jmapClient.parseMethodResponse(destroyResponse.methodResponses[0]);
-            if (!destroyResult.success) {
+            if (!destroyResult.ok) {
               logger.error(
                 { error: destroyResult.error, emailIds },
                 'JMAP error in batch_delete (fallback)'
@@ -517,16 +465,13 @@ export function registerBatchOperationTools(
                 content: [
                   {
                     type: 'text' as const,
-                    text: `Failed to batch delete emails: ${destroyResult.error?.description || destroyResult.error?.type || 'Unknown error'}`,
+                    text: `Failed to batch delete emails: ${destroyResult.error.description || destroyResult.error.type}`,
                   },
                 ],
               };
             }
 
-            const destroySetResponse = destroyResult.data as unknown as EmailSetResponse & {
-              destroyed?: string[];
-              notDestroyed?: Record<string, { type: string; description?: string }>;
-            };
+            const destroySetResponse = destroyResult.value;
             const batchResult = buildBatchDestroyResult(
               emailIds,
               destroySetResponse.destroyed,
@@ -546,37 +491,29 @@ export function registerBatchOperationTools(
           const trashMailboxId = trashIds[0];
 
           // Build update map to move all emails to Trash
-          const updateMap: Record<string, Record<string, unknown>> = {};
+          const updateMap: Record<string, PatchObject<Email>> = {};
           for (const emailId of emailIds) {
             updateMap[emailId] = { mailboxIds: { [trashMailboxId]: true } };
           }
 
-          const moveResponse = await jmapClient.request([
-            [
-              'Email/set',
-              {
-                accountId: session.accountId,
-                update: updateMap,
-              },
-              'batchMoveToTrash',
-            ],
+          const [moveResult] = await jmapClient.requestSettled((b) => [
+            b.call('Email/set', { accountId, update: updateMap }),
           ]);
 
-          const moveResult = jmapClient.parseMethodResponse(moveResponse.methodResponses[0]);
-          if (!moveResult.success) {
+          if (!moveResult.ok) {
             logger.error({ error: moveResult.error, emailIds }, 'JMAP error in batch_delete (move)');
             return {
               isError: true,
               content: [
                 {
                   type: 'text' as const,
-                  text: `Failed to batch move emails to Trash: ${moveResult.error?.description || moveResult.error?.type || 'Unknown error'}`,
+                  text: `Failed to batch move emails to Trash: ${moveResult.error.description || moveResult.error.type}`,
                 },
               ],
             };
           }
 
-          const setResponse = moveResult.data as unknown as EmailSetResponse;
+          const setResponse = moveResult.value;
           const batchResult = buildBatchResult(emailIds, setResponse.updated, setResponse.notUpdated);
 
           logger.debug(
@@ -634,40 +571,32 @@ export function registerBatchOperationTools(
       if (refused) return refused;
 
       try {
-        const session = jmapClient.getSession();
+        const accountId = jmapClient.getPrimaryAccountId();
 
         // Build update map using path syntax to add label without removing others
-        const updateMap: Record<string, Record<string, unknown>> = {};
+        const updateMap: Record<string, PatchObject<Email>> = {};
         for (const emailId of emailIds) {
           updateMap[emailId] = { [`mailboxIds/${mailboxId}`]: true };
         }
 
-        const response = await jmapClient.request([
-          [
-            'Email/set',
-            {
-              accountId: session.accountId,
-              update: updateMap,
-            },
-            'batchAddLabel',
-          ],
+        const [result] = await jmapClient.requestSettled((b) => [
+          b.call('Email/set', { accountId, update: updateMap }),
         ]);
 
-        const result = jmapClient.parseMethodResponse(response.methodResponses[0]);
-        if (!result.success) {
+        if (!result.ok) {
           logger.error({ error: result.error, emailIds }, 'JMAP error in batch_add_label');
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
-                text: `Failed to batch add label: ${result.error?.description || result.error?.type || 'Unknown error'}`,
+                text: `Failed to batch add label: ${result.error.description || result.error.type}`,
               },
             ],
           };
         }
 
-        const setResponse = result.data as unknown as EmailSetResponse;
+        const setResponse = result.value;
         const batchResult = buildBatchResult(emailIds, setResponse.updated, setResponse.notUpdated);
 
         logger.debug(
@@ -724,40 +653,32 @@ export function registerBatchOperationTools(
       if (refused) return refused;
 
       try {
-        const session = jmapClient.getSession();
+        const accountId = jmapClient.getPrimaryAccountId();
 
         // Build update map using path syntax to remove label
-        const updateMap: Record<string, Record<string, unknown>> = {};
+        const updateMap: Record<string, PatchObject<Email>> = {};
         for (const emailId of emailIds) {
           updateMap[emailId] = { [`mailboxIds/${mailboxId}`]: null };
         }
 
-        const response = await jmapClient.request([
-          [
-            'Email/set',
-            {
-              accountId: session.accountId,
-              update: updateMap,
-            },
-            'batchRemoveLabel',
-          ],
+        const [result] = await jmapClient.requestSettled((b) => [
+          b.call('Email/set', { accountId, update: updateMap }),
         ]);
 
-        const result = jmapClient.parseMethodResponse(response.methodResponses[0]);
-        if (!result.success) {
+        if (!result.ok) {
           logger.error({ error: result.error, emailIds }, 'JMAP error in batch_remove_label');
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
-                text: `Failed to batch remove label: ${result.error?.description || result.error?.type || 'Unknown error'}`,
+                text: `Failed to batch remove label: ${result.error.description || result.error.type}`,
               },
             ],
           };
         }
 
-        const setResponse = result.data as unknown as EmailSetResponse;
+        const setResponse = result.value;
         const batchResult = buildBatchResult(emailIds, setResponse.updated, setResponse.notUpdated);
 
         logger.debug(

@@ -2,7 +2,7 @@
  * Prior approval of every write: each write tool asks the user (MCP elicitation) with the exact
  * action, and sends or changes nothing unless the user accepts.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,7 +12,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { registerAllTools } from '../../../src/mcp/tools/index.js';
 import { approvalMessage, setApprover } from '../../../src/mcp/approval.js';
-import type { JMAPClient } from '../../../src/jmap/client.js';
+import { createFakeJmap, type Invocation } from '../../../src/testing/fake-jmap.js';
 import type { Logger } from '../../../src/config/logger.js';
 
 const logger = { debug() {}, info() {}, warn() {}, error() {}, child() { return logger; } } as unknown as Logger;
@@ -45,10 +45,11 @@ const email = (id: string) => ({
 });
 
 /** A fake JMAP server: reads answer, every "/set" call is recorded as a write. */
-function fakeJmap() {
+async function fakeJmap() {
   const writes: string[] = [];
-  const request = vi.fn(async (calls: [string, Record<string, any>, string][]) => ({
-    methodResponses: calls.map(([method, args, id]) => {
+  const fake = await createFakeJmap('acc');
+  fake.request.mockImplementation(async (calls: Invocation[]) => ({
+    methodResponses: calls.map(([method, args, id]): Invocation => {
       if (method.endsWith('/set')) {
         writes.push(method);
         const created = Object.fromEntries(Object.keys(args.create ?? {}).map((k) => [k, { id: `new-${k}`, threadId: 't1', blobId: 'b1', size: 10 }]));
@@ -62,17 +63,12 @@ function fakeJmap() {
       return [method, {}, id];
     }),
   }));
-  const jmap = {
-    getSession: () => ({ accountId: 'acc', apiUrl: 'https://jmap.example.com/api', username: 'alice.martin@example.com' }),
-    request,
-    parseMethodResponse: (r: [string, Record<string, unknown>]) => (r[0] === 'error' ? { success: false, error: { type: String(r[1].type) } } : { success: true, data: r[1] }),
-    downloadBlob: async (blobId: string) => new ArrayBuffer(blobId === 'small' ? 10 : 800 * 1024),
-  } as unknown as JMAPClient;
-  return { jmap, writes };
+  fake.serveBlob.mockImplementation(async (blobId) => new ArrayBuffer(blobId === 'small' ? 10 : 800 * 1024));
+  return { jmap: fake.client, writes };
 }
 
 async function connect(answer: 'accept' | 'decline' | 'cancel', opts: { elicitation?: boolean; mode?: 'elicit' | 'client'; exempt?: string[] } = {}) {
-  const { jmap, writes } = fakeJmap();
+  const { jmap, writes } = await fakeJmap();
   const server = new McpServer({ name: 't', version: '0' });
   setApprover(server, { mode: opts.mode ?? 'elicit', language: 'fr', timeoutMs: 2000, as: 'alice.martin@example.com', timeZone: 'Europe/Paris', exempt: opts.exempt });
   registerAllTools(server, jmap, logger, { signatureContent: { text: '--\nAlice MARTIN', html: '<p>--<br>Alice MARTIN</p>' } });

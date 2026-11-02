@@ -6,13 +6,8 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
-import type { JMAPClient } from '../../jmap/client.js';
+import type { Email, EmailAddress, EmailCreate, JmapClient, PatchObject } from 'jmap-client-ts';
 import type { Logger } from '../../config/logger.js';
-import type {
-  EmailSetResponse,
-  Identity,
-  EmailSubmissionSetResponse,
-} from '../../types/jmap.js';
 import type { SignatureContent } from '../../signature/index.js';
 import { approverFor } from '../approval.js';
 
@@ -26,14 +21,7 @@ const EMAIL_SEND_ANNOTATIONS: ToolAnnotations = {
   openWorldHint: true,
 };
 
-/**
- * JMAP capabilities required for email submission.
- */
-const SUBMISSION_USING = [
-  'urn:ietf:params:jmap:core',
-  'urn:ietf:params:jmap:mail',
-  'urn:ietf:params:jmap:submission',
-];
+const toAddress = (email: string): EmailAddress => ({ email }) as EmailAddress;
 
 /**
  * Options for email sending tools.
@@ -70,7 +58,7 @@ function appendSignature(body: string, signature: string, isHtml: boolean): stri
  */
 export function registerEmailSendingTools(
   server: McpServer,
-  jmapClient: JMAPClient,
+  jmapClient: JmapClient,
   logger: Logger,
   options: EmailSendingOptions = {}
 ): void {
@@ -104,25 +92,17 @@ export function registerEmailSendingTools(
       );
 
       try {
-        const session = jmapClient.getSession();
+        const accountId = jmapClient.getPrimaryAccountId();
 
         // Step 1: Get identity and mailboxes in a single batch
         // Use Mailbox/get instead of Mailbox/query because some servers don't support filter by role
-        const setupResponse = await jmapClient.request(
-          [
-            ['Identity/get', { accountId: session.accountId }, 'getIdentity'],
-            [
-              'Mailbox/get',
-              { accountId: session.accountId, properties: ['id', 'role'] },
-              'getMailboxes',
-            ],
-          ],
-          SUBMISSION_USING
-        );
+        const [identityResult, mailboxResult] = await jmapClient.requestSettled((b) => [
+          b.call('Identity/get', { accountId }),
+          b.call('Mailbox/get', { accountId, properties: ['id', 'role'] }),
+        ]);
 
         // Parse Identity response
-        const identityResult = jmapClient.parseMethodResponse(setupResponse.methodResponses[0]);
-        if (!identityResult.success) {
+        if (!identityResult.ok) {
           logger.error({ error: identityResult.error }, 'Failed to get identity');
           return {
             isError: true,
@@ -135,7 +115,7 @@ export function registerEmailSendingTools(
           };
         }
 
-        const identities = (identityResult.data as { list: Identity[] }).list;
+        const identities = identityResult.value.list;
         if (!identities || identities.length === 0) {
           logger.error({}, 'No sending identity available');
           return {
@@ -151,8 +131,7 @@ export function registerEmailSendingTools(
         const identity = identities[0];
 
         // Parse Mailbox response and find Sent/Drafts by role
-        const mailboxResult = jmapClient.parseMethodResponse(setupResponse.methodResponses[1]);
-        if (!mailboxResult.success) {
+        if (!mailboxResult.ok) {
           logger.error({ error: mailboxResult.error }, 'Failed to get mailboxes');
           return {
             isError: true,
@@ -165,7 +144,7 @@ export function registerEmailSendingTools(
           };
         }
 
-        const mailboxes = (mailboxResult.data as { list: Array<{ id: string; role: string | null }> }).list;
+        const mailboxes = mailboxResult.value.list;
         const sentMailbox = mailboxes.find((mb) => mb.role === 'sent');
         const draftsMailbox = mailboxes.find((mb) => mb.role === 'drafts');
 
@@ -213,10 +192,10 @@ export function registerEmailSendingTools(
         const senderEmail = from || defaultFrom || identity.email;
         const senderName = identity.name; // Always use identity name
 
-        const emailCreate: Record<string, unknown> = {
+        const emailCreate: EmailCreate = {
           mailboxIds: { [draftsMailboxId]: true },
           from: [{ name: senderName, email: senderEmail }],
-          to: to.map((email) => ({ email })),
+          to: to.map(toAddress),
           subject,
           bodyValues,
         };
@@ -231,14 +210,14 @@ export function registerEmailSendingTools(
 
         // Add optional address fields
         if (cc && cc.length > 0) {
-          emailCreate.cc = cc.map((email) => ({ email }));
+          emailCreate.cc = cc.map(toAddress);
         }
         if (bcc && bcc.length > 0) {
-          emailCreate.bcc = bcc.map((email) => ({ email }));
+          emailCreate.bcc = bcc.map(toAddress);
         }
 
         // Step 4: Build onSuccessUpdateEmail for Drafts-to-Sent transition
-        const onSuccessUpdate: Record<string, unknown> = {
+        const onSuccessUpdate: PatchObject<Email> = {
           'keywords/$draft': null,
         };
 
@@ -250,50 +229,38 @@ export function registerEmailSendingTools(
         // Step 5: Create email and submit in single batch
         const refused = await approverFor(server).gate('send_email', async () => ({ action: 'send_email', details: approverFor(server).message(emailCreate) }));
         if (refused) return refused;
-        const sendResponse = await jmapClient.request(
-          [
-            [
-              'Email/set',
-              {
-                accountId: session.accountId,
-                create: { email: emailCreate },
+        const [emailResult, submissionResult] = await jmapClient.requestSettled((b) => [
+          b.call('Email/set', {
+            accountId,
+            create: { email: emailCreate },
+          }),
+          b.call('EmailSubmission/set', {
+            accountId,
+            create: {
+              submission: {
+                identityId: identity.id,
+                emailId: '#email',
               },
-              'createEmail',
-            ],
-            [
-              'EmailSubmission/set',
-              {
-                accountId: session.accountId,
-                create: {
-                  submission: {
-                    identityId: identity.id,
-                    emailId: '#email',
-                  },
-                },
-                onSuccessUpdateEmail: { '#submission': onSuccessUpdate },
-              },
-              'submitEmail',
-            ],
-          ],
-          SUBMISSION_USING
-        );
+            },
+            onSuccessUpdateEmail: { '#submission': onSuccessUpdate },
+          }),
+        ]);
 
         // Step 6: Check Email/set response
-        const emailResult = jmapClient.parseMethodResponse(sendResponse.methodResponses[0]);
-        if (!emailResult.success) {
+        if (!emailResult.ok) {
           logger.error({ error: emailResult.error }, 'JMAP error in Email/set');
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
-                text: `Failed to create email: ${emailResult.error?.description || emailResult.error?.type || 'Unknown error'}`,
+                text: `Failed to create email: ${emailResult.error.description || emailResult.error.type}`,
               },
             ],
           };
         }
 
-        const emailSetResponse = emailResult.data as unknown as EmailSetResponse;
+        const emailSetResponse = emailResult.value;
         if (emailSetResponse.notCreated?.email) {
           const error = emailSetResponse.notCreated.email;
           logger.error({ error }, 'Email/set notCreated');
@@ -323,21 +290,20 @@ export function registerEmailSendingTools(
         }
 
         // Step 7: Check EmailSubmission/set response
-        const submissionResult = jmapClient.parseMethodResponse(sendResponse.methodResponses[1]);
-        if (!submissionResult.success) {
+        if (!submissionResult.ok) {
           logger.error({ error: submissionResult.error }, 'JMAP error in EmailSubmission/set');
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
-                text: `Failed to send email: ${submissionResult.error?.description || submissionResult.error?.type || 'Unknown error'}`,
+                text: `Failed to send email: ${submissionResult.error.description || submissionResult.error.type}`,
               },
             ],
           };
         }
 
-        const submissionSetResponse = submissionResult.data as unknown as EmailSubmissionSetResponse;
+        const submissionSetResponse = submissionResult.value;
         if (submissionSetResponse.notCreated?.submission) {
           const error = submissionSetResponse.notCreated.submission;
           logger.error({ error }, 'EmailSubmission/set notCreated');
@@ -435,34 +401,22 @@ export function registerEmailSendingTools(
       );
 
       try {
-        const session = jmapClient.getSession();
+        const accountId = jmapClient.getPrimaryAccountId();
 
         // Step 1: Get identity, mailboxes, and original email in a single batch
         // Use Mailbox/get instead of Mailbox/query because some servers don't support filter by role
-        const setupResponse = await jmapClient.request(
-          [
-            ['Identity/get', { accountId: session.accountId }, 'getIdentity'],
-            [
-              'Mailbox/get',
-              { accountId: session.accountId, properties: ['id', 'role'] },
-              'getMailboxes',
-            ],
-            [
-              'Email/get',
-              {
-                accountId: session.accountId,
-                ids: [originalEmailId],
-                properties: ['messageId', 'references', 'subject', 'from', 'to', 'cc', 'replyTo'],
-              },
-              'getOriginal',
-            ],
-          ],
-          SUBMISSION_USING
-        );
+        const [identityResult, mailboxResult, originalResult] = await jmapClient.requestSettled((b) => [
+          b.call('Identity/get', { accountId }),
+          b.call('Mailbox/get', { accountId, properties: ['id', 'role'] }),
+          b.call('Email/get', {
+            accountId,
+            ids: [originalEmailId],
+            properties: ['messageId', 'references', 'subject', 'from', 'to', 'cc', 'replyTo'],
+          }),
+        ]);
 
         // Parse Identity response
-        const identityResult = jmapClient.parseMethodResponse(setupResponse.methodResponses[0]);
-        if (!identityResult.success) {
+        if (!identityResult.ok) {
           logger.error({ error: identityResult.error }, 'Failed to get identity');
           return {
             isError: true,
@@ -475,7 +429,7 @@ export function registerEmailSendingTools(
           };
         }
 
-        const identities = (identityResult.data as { list: Identity[] }).list;
+        const identities = identityResult.value.list;
         if (!identities || identities.length === 0) {
           logger.error({}, 'No sending identity available');
           return {
@@ -491,8 +445,7 @@ export function registerEmailSendingTools(
         const identity = identities[0];
 
         // Parse Mailbox response and find Sent/Drafts by role
-        const mailboxResult = jmapClient.parseMethodResponse(setupResponse.methodResponses[1]);
-        if (!mailboxResult.success) {
+        if (!mailboxResult.ok) {
           logger.error({ error: mailboxResult.error }, 'Failed to get mailboxes');
           return {
             isError: true,
@@ -505,7 +458,7 @@ export function registerEmailSendingTools(
           };
         }
 
-        const mailboxes = (mailboxResult.data as { list: Array<{ id: string; role: string | null }> }).list;
+        const mailboxes = mailboxResult.value.list;
         const sentMailbox = mailboxes.find((mb) => mb.role === 'sent');
         const draftsMailbox = mailboxes.find((mb) => mb.role === 'drafts');
 
@@ -526,33 +479,20 @@ export function registerEmailSendingTools(
         const draftsMailboxId = draftsMailbox.id;
 
         // Parse original email response
-        const originalResult = jmapClient.parseMethodResponse(setupResponse.methodResponses[2]);
-        if (!originalResult.success) {
+        if (!originalResult.ok) {
           logger.error({ error: originalResult.error }, 'Failed to get original email');
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
-                text: `Failed to fetch original email: ${originalResult.error?.description || originalResult.error?.type || 'Unknown error'}`,
+                text: `Failed to fetch original email: ${originalResult.error.description || originalResult.error.type}`,
               },
             ],
           };
         }
 
-        const originalList = (
-          originalResult.data as {
-            list: Array<{
-              messageId?: string[];
-              references?: string[];
-              subject?: string;
-              from?: Array<{ name?: string; email: string }>;
-              to?: Array<{ name?: string; email: string }>;
-              cc?: Array<{ name?: string; email: string }>;
-              replyTo?: Array<{ name?: string; email: string }>;
-            }>;
-          }
-        ).list;
+        const originalList = originalResult.value.list;
 
         if (!originalList || originalList.length === 0) {
           logger.error({ originalEmailId }, 'Original email not found');
@@ -600,8 +540,8 @@ export function registerEmailSendingTools(
           };
         }
 
-        const toAddresses: Array<{ name?: string; email: string }> = [primaryRecipient];
-        const ccAddresses: Array<{ name?: string; email: string }> = [];
+        const toAddresses: EmailAddress[] = [primaryRecipient];
+        const ccAddresses: EmailAddress[] = [];
 
         if (replyAll) {
           // Add all original 'to' recipients except self (case-insensitive)
@@ -649,7 +589,7 @@ export function registerEmailSendingTools(
         const senderEmail = from || defaultFrom || identity.email;
         const senderName = identity.name; // Always use identity name
 
-        const emailCreate: Record<string, unknown> = {
+        const emailCreate: EmailCreate = {
           mailboxIds: { [draftsMailboxId]: true },
           from: [{ name: senderName, email: senderEmail }],
           to: toAddresses,
@@ -673,7 +613,7 @@ export function registerEmailSendingTools(
         }
 
         // Step 7: Build onSuccessUpdateEmail for Drafts-to-Sent transition
-        const onSuccessUpdate: Record<string, unknown> = {
+        const onSuccessUpdate: PatchObject<Email> = {
           'keywords/$draft': null,
         };
 
@@ -685,50 +625,38 @@ export function registerEmailSendingTools(
         // Step 8: Create email and submit in single batch
         const refused = await approverFor(server).gate('reply_email', async () => ({ action: 'reply_email', details: [['in_reply_to', [original.from?.[0] ? (original.from[0].name ? `${original.from[0].name} <${original.from[0].email}>` : original.from[0].email) : undefined, original.subject].filter(Boolean).join(' · ')], ...approverFor(server).message(emailCreate)] }));
         if (refused) return refused;
-        const sendResponse = await jmapClient.request(
-          [
-            [
-              'Email/set',
-              {
-                accountId: session.accountId,
-                create: { reply: emailCreate },
+        const [emailResult, submissionResult] = await jmapClient.requestSettled((b) => [
+          b.call('Email/set', {
+            accountId,
+            create: { reply: emailCreate },
+          }),
+          b.call('EmailSubmission/set', {
+            accountId,
+            create: {
+              submission: {
+                identityId: identity.id,
+                emailId: '#reply',
               },
-              'createReply',
-            ],
-            [
-              'EmailSubmission/set',
-              {
-                accountId: session.accountId,
-                create: {
-                  submission: {
-                    identityId: identity.id,
-                    emailId: '#reply',
-                  },
-                },
-                onSuccessUpdateEmail: { '#submission': onSuccessUpdate },
-              },
-              'submitReply',
-            ],
-          ],
-          SUBMISSION_USING
-        );
+            },
+            onSuccessUpdateEmail: { '#submission': onSuccessUpdate },
+          }),
+        ]);
 
         // Step 9: Check Email/set response
-        const emailResult = jmapClient.parseMethodResponse(sendResponse.methodResponses[0]);
-        if (!emailResult.success) {
+        if (!emailResult.ok) {
           logger.error({ error: emailResult.error }, 'JMAP error in Email/set for reply');
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
-                text: `Failed to create reply: ${emailResult.error?.description || emailResult.error?.type || 'Unknown error'}`,
+                text: `Failed to create reply: ${emailResult.error.description || emailResult.error.type}`,
               },
             ],
           };
         }
 
-        const emailSetResponse = emailResult.data as unknown as EmailSetResponse;
+        const emailSetResponse = emailResult.value;
         if (emailSetResponse.notCreated?.reply) {
           const error = emailSetResponse.notCreated.reply;
           logger.error({ error }, 'Email/set notCreated for reply');
@@ -758,21 +686,20 @@ export function registerEmailSendingTools(
         }
 
         // Step 10: Check EmailSubmission/set response
-        const submissionResult = jmapClient.parseMethodResponse(sendResponse.methodResponses[1]);
-        if (!submissionResult.success) {
+        if (!submissionResult.ok) {
           logger.error({ error: submissionResult.error }, 'JMAP error in EmailSubmission/set for reply');
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
-                text: `Failed to send reply: ${submissionResult.error?.description || submissionResult.error?.type || 'Unknown error'}`,
+                text: `Failed to send reply: ${submissionResult.error.description || submissionResult.error.type}`,
               },
             ],
           };
         }
 
-        const submissionSetResponse = submissionResult.data as unknown as EmailSubmissionSetResponse;
+        const submissionSetResponse = submissionResult.value;
         if (submissionSetResponse.notCreated?.submission) {
           const error = submissionSetResponse.notCreated.submission;
           logger.error({ error }, 'EmailSubmission/set notCreated for reply');
@@ -878,36 +805,24 @@ export function registerEmailSendingTools(
       );
 
       try {
-        const session = jmapClient.getSession();
+        const accountId = jmapClient.getPrimaryAccountId();
 
         // Step 1: Get identity, mailboxes, and original email in a single batch
-        const setupResponse = await jmapClient.request(
-          [
-            ['Identity/get', { accountId: session.accountId }, 'getIdentity'],
-            [
-              'Mailbox/get',
-              { accountId: session.accountId, properties: ['id', 'role'] },
-              'getMailboxes',
-            ],
-            [
-              'Email/get',
-              {
-                accountId: session.accountId,
-                ids: [originalEmailId],
-                properties: ['subject', 'from', 'to', 'cc', 'sentAt', 'textBody', 'htmlBody', 'bodyValues', 'attachments'],
-                fetchTextBodyValues: true,
-                fetchHTMLBodyValues: true,
-                bodyProperties: ['partId', 'blobId', 'type', 'name', 'size', 'disposition', 'cid'],
-              },
-              'getOriginal',
-            ],
-          ],
-          SUBMISSION_USING
-        );
+        const [identityResult, mailboxResult, originalResult] = await jmapClient.requestSettled((b) => [
+          b.call('Identity/get', { accountId }),
+          b.call('Mailbox/get', { accountId, properties: ['id', 'role'] }),
+          b.call('Email/get', {
+            accountId,
+            ids: [originalEmailId],
+            properties: ['subject', 'from', 'to', 'cc', 'sentAt', 'textBody', 'htmlBody', 'bodyValues', 'attachments'],
+            fetchTextBodyValues: true,
+            fetchHTMLBodyValues: true,
+            bodyProperties: ['partId', 'blobId', 'type', 'name', 'size', 'disposition', 'cid'],
+          }),
+        ]);
 
         // Parse Identity response
-        const identityResult = jmapClient.parseMethodResponse(setupResponse.methodResponses[0]);
-        if (!identityResult.success) {
+        if (!identityResult.ok) {
           logger.error({ error: identityResult.error }, 'Failed to get identity');
           return {
             isError: true,
@@ -920,7 +835,7 @@ export function registerEmailSendingTools(
           };
         }
 
-        const identities = (identityResult.data as { list: Identity[] }).list;
+        const identities = identityResult.value.list;
         if (!identities || identities.length === 0) {
           logger.error({}, 'No sending identity available');
           return {
@@ -936,8 +851,7 @@ export function registerEmailSendingTools(
         const identity = identities[0];
 
         // Parse Mailbox response and find Sent/Drafts by role
-        const mailboxResult = jmapClient.parseMethodResponse(setupResponse.methodResponses[1]);
-        if (!mailboxResult.success) {
+        if (!mailboxResult.ok) {
           logger.error({ error: mailboxResult.error }, 'Failed to get mailboxes');
           return {
             isError: true,
@@ -950,7 +864,7 @@ export function registerEmailSendingTools(
           };
         }
 
-        const mailboxes = (mailboxResult.data as { list: Array<{ id: string; role: string | null }> }).list;
+        const mailboxes = mailboxResult.value.list;
         const sentMailbox = mailboxes.find((mb) => mb.role === 'sent');
         const draftsMailbox = mailboxes.find((mb) => mb.role === 'drafts');
 
@@ -971,40 +885,20 @@ export function registerEmailSendingTools(
         const draftsMailboxId = draftsMailbox.id;
 
         // Parse original email response
-        const originalResult = jmapClient.parseMethodResponse(setupResponse.methodResponses[2]);
-        if (!originalResult.success) {
+        if (!originalResult.ok) {
           logger.error({ error: originalResult.error }, 'Failed to get original email');
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
-                text: `Failed to fetch original email: ${originalResult.error?.description || originalResult.error?.type || 'Unknown error'}`,
+                text: `Failed to fetch original email: ${originalResult.error.description || originalResult.error.type}`,
               },
             ],
           };
         }
 
-        interface OriginalEmailData {
-          subject?: string;
-          from?: Array<{ name?: string; email: string }>;
-          to?: Array<{ name?: string; email: string }>;
-          cc?: Array<{ name?: string; email: string }>;
-          sentAt?: string;
-          textBody?: Array<{ partId: string }>;
-          htmlBody?: Array<{ partId: string }>;
-          bodyValues?: Record<string, { value: string }>;
-          attachments?: Array<{
-            blobId: string;
-            type: string;
-            name?: string;
-            size?: number;
-            disposition?: string;
-            cid?: string;
-          }>;
-        }
-
-        const originalList = (originalResult.data as { list: OriginalEmailData[] }).list;
+        const originalList = originalResult.value.list;
 
         if (!originalList || originalList.length === 0) {
           logger.error({ originalEmailId }, 'Original email not found');
@@ -1094,10 +988,10 @@ ${originalHtmlBody || `<p>${escapeHtml(originalTextBody).replace(/\n/g, '<br/>')
           html: { value: htmlBodyContent },
         };
 
-        const emailCreate: Record<string, unknown> = {
+        const emailCreate: EmailCreate = {
           mailboxIds: { [draftsMailboxId]: true },
           from: [{ name: senderName, email: senderEmail }],
-          to: (to as string[]).map((email) => ({ email })),
+          to: (to as string[]).map(toAddress),
           subject: forwardSubject,
           bodyValues,
           textBody: [{ partId: 'text', type: 'text/plain' }],
@@ -1107,7 +1001,7 @@ ${originalHtmlBody || `<p>${escapeHtml(originalTextBody).replace(/\n/g, '<br/>')
         // Add attachments if present (reference original blobs)
         if (attachments.length > 0) {
           emailCreate.attachments = attachments.map((att, index) => ({
-            blobId: att.blobId,
+            blobId: att.blobId as string,
             type: att.type,
             name: att.name || `attachment-${index + 1}`,
           }));
@@ -1115,16 +1009,16 @@ ${originalHtmlBody || `<p>${escapeHtml(originalTextBody).replace(/\n/g, '<br/>')
 
         // Add optional address fields
         if (cc && (cc as string[]).length > 0) {
-          emailCreate.cc = (cc as string[]).map((email) => ({ email }));
+          emailCreate.cc = (cc as string[]).map(toAddress);
         }
         if (bcc && (bcc as string[]).length > 0) {
-          emailCreate.bcc = (bcc as string[]).map((email) => ({ email }));
+          emailCreate.bcc = (bcc as string[]).map(toAddress);
         }
 
         // Note: Unlike reply_email, forward does NOT include inReplyTo or references headers
 
         // Step 7: Build onSuccessUpdateEmail for Drafts-to-Sent transition
-        const onSuccessUpdate: Record<string, unknown> = {
+        const onSuccessUpdate: PatchObject<Email> = {
           'keywords/$draft': null,
         };
 
@@ -1136,50 +1030,38 @@ ${originalHtmlBody || `<p>${escapeHtml(originalTextBody).replace(/\n/g, '<br/>')
         // Step 8: Create email and submit in single batch
         const refused = await approverFor(server).gate('forward_email', async () => ({ action: 'forward_email', details: [['email', [original.from?.[0] ? (original.from[0].name ? `${original.from[0].name} <${original.from[0].email}>` : original.from[0].email) : undefined, original.subject].filter(Boolean).join(' · ')], ...approverFor(server).message(emailCreate)] }));
         if (refused) return refused;
-        const sendResponse = await jmapClient.request(
-          [
-            [
-              'Email/set',
-              {
-                accountId: session.accountId,
-                create: { forward: emailCreate },
+        const [emailResult, submissionResult] = await jmapClient.requestSettled((b) => [
+          b.call('Email/set', {
+            accountId,
+            create: { forward: emailCreate },
+          }),
+          b.call('EmailSubmission/set', {
+            accountId,
+            create: {
+              submission: {
+                identityId: identity.id,
+                emailId: '#forward',
               },
-              'createForward',
-            ],
-            [
-              'EmailSubmission/set',
-              {
-                accountId: session.accountId,
-                create: {
-                  submission: {
-                    identityId: identity.id,
-                    emailId: '#forward',
-                  },
-                },
-                onSuccessUpdateEmail: { '#submission': onSuccessUpdate },
-              },
-              'submitForward',
-            ],
-          ],
-          SUBMISSION_USING
-        );
+            },
+            onSuccessUpdateEmail: { '#submission': onSuccessUpdate },
+          }),
+        ]);
 
         // Step 9: Check Email/set response
-        const emailResult = jmapClient.parseMethodResponse(sendResponse.methodResponses[0]);
-        if (!emailResult.success) {
+        if (!emailResult.ok) {
           logger.error({ error: emailResult.error }, 'JMAP error in Email/set for forward');
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
-                text: `Failed to create forwarded email: ${emailResult.error?.description || emailResult.error?.type || 'Unknown error'}`,
+                text: `Failed to create forwarded email: ${emailResult.error.description || emailResult.error.type}`,
               },
             ],
           };
         }
 
-        const emailSetResponse = emailResult.data as unknown as EmailSetResponse;
+        const emailSetResponse = emailResult.value;
         if (emailSetResponse.notCreated?.forward) {
           const error = emailSetResponse.notCreated.forward;
           logger.error({ error }, 'Email/set notCreated for forward');
@@ -1224,21 +1106,20 @@ ${originalHtmlBody || `<p>${escapeHtml(originalTextBody).replace(/\n/g, '<br/>')
         }
 
         // Step 10: Check EmailSubmission/set response
-        const submissionResult = jmapClient.parseMethodResponse(sendResponse.methodResponses[1]);
-        if (!submissionResult.success) {
+        if (!submissionResult.ok) {
           logger.error({ error: submissionResult.error }, 'JMAP error in EmailSubmission/set for forward');
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
-                text: `Failed to send forwarded email: ${submissionResult.error?.description || submissionResult.error?.type || 'Unknown error'}`,
+                text: `Failed to send forwarded email: ${submissionResult.error.description || submissionResult.error.type}`,
               },
             ],
           };
         }
 
-        const submissionSetResponse = submissionResult.data as unknown as EmailSubmissionSetResponse;
+        const submissionSetResponse = submissionResult.value;
         if (submissionSetResponse.notCreated?.submission) {
           const error = submissionSetResponse.notCreated.submission;
           logger.error({ error }, 'EmailSubmission/set notCreated for forward');
@@ -1279,21 +1160,12 @@ ${originalHtmlBody || `<p>${escapeHtml(originalTextBody).replace(/\n/g, '<br/>')
 
         // Step 11: Mark original email with $forwarded keyword (non-blocking)
         try {
-          await jmapClient.request(
-            [
-              [
-                'Email/set',
-                {
-                  accountId: session.accountId,
-                  update: {
-                    [originalEmailId as string]: { 'keywords/$forwarded': true },
-                  },
-                },
-                'markForwarded',
-              ],
-            ],
-            SUBMISSION_USING
-          );
+          await jmapClient.call('Email/set', {
+            accountId,
+            update: {
+              [originalEmailId as string]: { 'keywords/$forwarded': true },
+            },
+          });
         } catch (markError) {
           // Log warning but don't fail the forward
           logger.warn({ error: markError, originalEmailId }, 'Failed to mark original email as forwarded');

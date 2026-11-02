@@ -3,7 +3,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { registerEmailTools } from './email.js';
-import type { JMAPClient } from '../../jmap/client.js';
+import { createFakeJmap, type FakeJmap } from '../../testing/fake-jmap.js';
 import type { Logger } from '../../config/logger.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
@@ -15,11 +15,11 @@ type ToolHandler = (args: Record<string, unknown>) => Promise<{
 
 describe('registerEmailTools', () => {
   let mockServer: McpServer;
-  let mockJmapClient: JMAPClient;
+  let mockJmapClient: FakeJmap;
   let mockLogger: Logger;
   let registeredTools: Map<string, ToolHandler>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     registeredTools = new Map();
 
     // Mock MCP server
@@ -30,11 +30,7 @@ describe('registerEmailTools', () => {
     } as unknown as McpServer;
 
     // Mock JMAP client
-    mockJmapClient = {
-      getSession: vi.fn(() => ({ accountId: 'account-1', apiUrl: 'https://jmap.example.com/api' })),
-      request: vi.fn(),
-      parseMethodResponse: vi.fn(),
-    } as unknown as JMAPClient;
+    mockJmapClient = await createFakeJmap();
 
     // Mock logger (silent)
     mockLogger = {
@@ -45,7 +41,7 @@ describe('registerEmailTools', () => {
     } as unknown as Logger;
 
     // Register all tools
-    registerEmailTools(mockServer, mockJmapClient, mockLogger);
+    registerEmailTools(mockServer, mockJmapClient.client, mockLogger);
   });
 
   describe('get_email', () => {
@@ -72,10 +68,6 @@ describe('registerEmailTools', () => {
           ['Email/get', { accountId: 'account-1', list: [mockEmail] }, 'getEmail'],
         ],
       });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: { accountId: 'account-1', list: [mockEmail] },
-      });
 
       const handler = registeredTools.get('get_email')!;
       const result = await handler({ emailId: 'email-1' });
@@ -94,10 +86,6 @@ describe('registerEmailTools', () => {
           ['Email/get', { accountId: 'account-1', list: [], notFound: ['email-nonexistent'] }, 'getEmail'],
         ],
       });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: { accountId: 'account-1', list: [], notFound: ['email-nonexistent'] },
-      });
 
       const handler = registeredTools.get('get_email')!;
       const result = await handler({ emailId: 'email-nonexistent' });
@@ -111,10 +99,6 @@ describe('registerEmailTools', () => {
         methodResponses: [
           ['error', { type: 'serverError', description: 'Internal server error' }, 'getEmail'],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: false,
-        error: { type: 'serverError', description: 'Internal server error' },
       });
 
       const handler = registeredTools.get('get_email')!;
@@ -172,15 +156,6 @@ describe('registerEmailTools', () => {
           ['Email/get', { accountId: 'account-1', list: mockEmails }, 'getEmails'],
         ],
       });
-      vi.mocked(mockJmapClient.parseMethodResponse)
-        .mockReturnValueOnce({
-          success: true,
-          data: { accountId: 'account-1', ids: ['email-1', 'email-2'], total: 2 },
-        })
-        .mockReturnValueOnce({
-          success: true,
-          data: { accountId: 'account-1', list: mockEmails },
-        });
 
       const handler = registeredTools.get('search_emails')!;
       const result = await handler({ mailboxId: 'inbox', limit: 20 });
@@ -199,15 +174,6 @@ describe('registerEmailTools', () => {
           ['Email/get', { accountId: 'account-1', list: [] }, 'getEmails'],
         ],
       });
-      vi.mocked(mockJmapClient.parseMethodResponse)
-        .mockReturnValueOnce({
-          success: true,
-          data: { accountId: 'account-1', ids: [], total: 0 },
-        })
-        .mockReturnValueOnce({
-          success: true,
-          data: { accountId: 'account-1', list: [] },
-        });
 
       const handler = registeredTools.get('search_emails')!;
       await handler({
@@ -249,10 +215,6 @@ describe('registerEmailTools', () => {
           ['error', { type: 'invalidArguments', description: 'Bad filter' }, 'queryEmails'],
         ],
       });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: false,
-        error: { type: 'invalidArguments', description: 'Bad filter' },
-      });
 
       const handler = registeredTools.get('search_emails')!;
       const result = await handler({ limit: 20 });
@@ -268,15 +230,6 @@ describe('registerEmailTools', () => {
           ['error', { type: 'serverError', description: 'Fetch failed' }, 'getEmails'],
         ],
       });
-      vi.mocked(mockJmapClient.parseMethodResponse)
-        .mockReturnValueOnce({
-          success: true,
-          data: { accountId: 'account-1', ids: ['email-1'], total: 1 },
-        })
-        .mockReturnValueOnce({
-          success: false,
-          error: { type: 'serverError', description: 'Fetch failed' },
-        });
 
       const handler = registeredTools.get('search_emails')!;
       const result = await handler({ limit: 20 });
@@ -311,13 +264,6 @@ describe('registerEmailTools', () => {
           ],
         ],
       });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: {
-          accountId: 'account-1',
-          list: [{ id: 'email-1', mailboxIds: { inbox: true, archive: true, trash: false } }],
-        },
-      });
 
       const handler = registeredTools.get('get_email_labels')!;
       const result = await handler({ emailId: 'email-1' });
@@ -336,10 +282,6 @@ describe('registerEmailTools', () => {
           ['Email/get', { accountId: 'account-1', list: [] }, 'getEmailLabels'],
         ],
       });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: { accountId: 'account-1', list: [] },
-      });
 
       const handler = registeredTools.get('get_email_labels')!;
       const result = await handler({ emailId: 'email-nonexistent' });
@@ -353,10 +295,6 @@ describe('registerEmailTools', () => {
         methodResponses: [
           ['error', { type: 'serverError', description: 'Internal error' }, 'getEmailLabels'],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: false,
-        error: { type: 'serverError', description: 'Internal error' },
       });
 
       const handler = registeredTools.get('get_email_labels')!;

@@ -6,7 +6,7 @@ vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
 }));
 
 import { registerEmailSendingTools } from '../../../../src/mcp/tools/email-sending.js';
-import type { JMAPClient } from '../../../../src/jmap/client.js';
+import { createFakeJmap, type FakeJmap } from '../../../../src/testing/fake-jmap.js';
 import type { Logger } from '../../../../src/config/logger.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { setApprover } from '../../../../src/mcp/approval.js';
@@ -33,11 +33,11 @@ interface ToolRegistration {
 
 describe('Email Sending Tools', () => {
   let mockServer: McpServer;
-  let mockJmapClient: JMAPClient;
+  let mockJmapClient: FakeJmap;
   let mockLogger: Logger;
   let registeredTools: Map<string, ToolRegistration>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
 
     // Track tool registrations
@@ -56,12 +56,7 @@ describe('Email Sending Tools', () => {
     // these tests script every JMAP call: the client confirms (approval prompts are tested in tests/unit/mcp/approval.test.ts)
     setApprover(mockServer, { mode: 'client', language: 'en', timeoutMs: 1000 });
 
-    // Mock JMAPClient
-    mockJmapClient = {
-      getSession: vi.fn().mockReturnValue({ accountId: 'account1' }),
-      request: vi.fn(),
-      parseMethodResponse: vi.fn(),
-    } as unknown as JMAPClient;
+    mockJmapClient = await createFakeJmap('account1');
 
     // Mock Logger
     mockLogger = {
@@ -74,7 +69,7 @@ describe('Email Sending Tools', () => {
 
   describe('send_email', () => {
     it('registers send_email tool with correct metadata', () => {
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger);
 
       expect(registeredTools.has('send_email')).toBe(true);
       const tool = registeredTools.get('send_email')!;
@@ -106,17 +101,7 @@ describe('Email Sending Tools', () => {
       (mockJmapClient.request as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce(setupResponse)
         .mockResolvedValueOnce(sendResponse);
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        // Setup responses
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'test@example.com' }] } })
-        
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        // Send responses
-        .mockReturnValueOnce({ success: true, data: { created: { email: { id: 'email-1', blobId: 'blob-1', threadId: 'thread-1' } } } })
-        .mockReturnValueOnce({ success: true, data: { created: { submission: { id: 'submission-1' } } } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('send_email')!;
 
       const result = await tool.handler({
@@ -156,15 +141,7 @@ describe('Email Sending Tools', () => {
       (mockJmapClient.request as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce(setupResponse)
         .mockResolvedValueOnce(sendResponse);
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'test@example.com' }] } })
-        
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({ success: true, data: { created: { email: { id: 'email-1', blobId: 'blob-1', threadId: 'thread-1' } } } })
-        .mockReturnValueOnce({ success: true, data: { created: { submission: { id: 'submission-1' } } } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('send_email')!;
 
       await tool.handler({
@@ -201,15 +178,7 @@ describe('Email Sending Tools', () => {
       (mockJmapClient.request as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce(setupResponse)
         .mockResolvedValueOnce(sendResponse);
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'test@example.com' }] } })
-        
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({ success: true, data: { created: { email: { id: 'email-1', blobId: 'blob-1', threadId: 'thread-1' } } } })
-        .mockReturnValueOnce({ success: true, data: { created: { submission: { id: 'submission-1' } } } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('send_email')!;
 
       await tool.handler({
@@ -232,11 +201,7 @@ describe('Email Sending Tools', () => {
       };
 
       (mockJmapClient.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(setupResponse);
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [] } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('send_email')!;
 
       const result = await tool.handler({
@@ -266,14 +231,7 @@ describe('Email Sending Tools', () => {
       (mockJmapClient.request as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce(setupResponse)
         .mockResolvedValueOnce(sendResponse);
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'test@example.com' }] } })
-        
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({ success: true, data: { notCreated: { email: { type: 'invalidProperties', description: 'Bad email data' } } } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('send_email')!;
 
       const result = await tool.handler({
@@ -304,15 +262,7 @@ describe('Email Sending Tools', () => {
       (mockJmapClient.request as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce(setupResponse)
         .mockResolvedValueOnce(sendResponse);
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'test@example.com' }] } })
-        
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({ success: true, data: { created: { email: { id: 'email-1', blobId: 'blob-1', threadId: 'thread-1' } } } })
-        .mockReturnValueOnce({ success: true, data: { notCreated: { submission: { type: 'forbiddenFrom', description: 'Cannot send from this address' } } } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('send_email')!;
 
       const result = await tool.handler({
@@ -328,7 +278,7 @@ describe('Email Sending Tools', () => {
 
   describe('reply_email', () => {
     it('registers reply_email tool with correct metadata', () => {
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger);
 
       expect(registeredTools.has('reply_email')).toBe(true);
       const tool = registeredTools.get('reply_email')!;
@@ -364,26 +314,7 @@ describe('Email Sending Tools', () => {
       (mockJmapClient.request as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce(setupResponse)
         .mockResolvedValueOnce(sendResponse);
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'me@example.com' }] } })
-        
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            list: [{
-              messageId: ['<msg1@example.com>'],
-              references: ['<ref1@example.com>'],
-              subject: 'Original Subject',
-              from: [{ name: 'Sender', email: 'sender@example.com' }],
-            }],
-          },
-        })
-        .mockReturnValueOnce({ success: true, data: { created: { reply: { id: 'reply-1', blobId: 'blob-1', threadId: 'thread-1' } } } })
-        .mockReturnValueOnce({ success: true, data: { created: { submission: { id: 'submission-1' } } } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('reply_email')!;
 
       await tool.handler({
@@ -425,19 +356,7 @@ describe('Email Sending Tools', () => {
       (mockJmapClient.request as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce(setupResponse)
         .mockResolvedValueOnce(sendResponse);
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'me@example.com' }] } })
-        
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({
-          success: true,
-          data: { list: [{ messageId: ['<msg1@example.com>'], subject: 'Hello', from: [{ email: 'sender@example.com' }] }] },
-        })
-        .mockReturnValueOnce({ success: true, data: { created: { reply: { id: 'reply-1', blobId: 'blob-1', threadId: 'thread-1' } } } })
-        .mockReturnValueOnce({ success: true, data: { created: { submission: { id: 'submission-1' } } } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('reply_email')!;
 
       await tool.handler({
@@ -475,19 +394,7 @@ describe('Email Sending Tools', () => {
       (mockJmapClient.request as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce(setupResponse)
         .mockResolvedValueOnce(sendResponse);
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'me@example.com' }] } })
-        
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({
-          success: true,
-          data: { list: [{ messageId: ['<msg1@example.com>'], subject: 'Re: Hello', from: [{ email: 'sender@example.com' }] }] },
-        })
-        .mockReturnValueOnce({ success: true, data: { created: { reply: { id: 'reply-1', blobId: 'blob-1', threadId: 'thread-1' } } } })
-        .mockReturnValueOnce({ success: true, data: { created: { submission: { id: 'submission-1' } } } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('reply_email')!;
 
       await tool.handler({
@@ -526,26 +433,7 @@ describe('Email Sending Tools', () => {
       (mockJmapClient.request as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce(setupResponse)
         .mockResolvedValueOnce(sendResponse);
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'me@example.com' }] } })
-        
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            list: [{
-              messageId: ['<msg1@example.com>'],
-              subject: 'Hello',
-              from: [{ email: 'from@example.com' }],
-              replyTo: [{ email: 'reply@example.com' }],
-            }],
-          },
-        })
-        .mockReturnValueOnce({ success: true, data: { created: { reply: { id: 'reply-1', blobId: 'blob-1', threadId: 'thread-1' } } } })
-        .mockReturnValueOnce({ success: true, data: { created: { submission: { id: 'submission-1' } } } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('reply_email')!;
 
       await tool.handler({
@@ -583,19 +471,7 @@ describe('Email Sending Tools', () => {
       (mockJmapClient.request as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce(setupResponse)
         .mockResolvedValueOnce(sendResponse);
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'me@example.com' }] } })
-        
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({
-          success: true,
-          data: { list: [{ messageId: ['<msg1@example.com>'], subject: 'Hello', from: [{ email: 'from@example.com' }] }] },
-        })
-        .mockReturnValueOnce({ success: true, data: { created: { reply: { id: 'reply-1', blobId: 'blob-1', threadId: 'thread-1' } } } })
-        .mockReturnValueOnce({ success: true, data: { created: { submission: { id: 'submission-1' } } } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('reply_email')!;
 
       await tool.handler({
@@ -635,27 +511,7 @@ describe('Email Sending Tools', () => {
       (mockJmapClient.request as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce(setupResponse)
         .mockResolvedValueOnce(sendResponse);
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'me@example.com' }] } })
-        
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            list: [{
-              messageId: ['<msg1@example.com>'],
-              subject: 'Hello',
-              from: [{ email: 'sender@example.com' }],
-              to: [{ email: 'me@example.com' }, { email: 'other@example.com' }],
-              cc: [{ email: 'cc1@example.com' }, { email: 'cc2@example.com' }],
-            }],
-          },
-        })
-        .mockReturnValueOnce({ success: true, data: { created: { reply: { id: 'reply-1', blobId: 'blob-1', threadId: 'thread-1' } } } })
-        .mockReturnValueOnce({ success: true, data: { created: { submission: { id: 'submission-1' } } } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('reply_email')!;
 
       await tool.handler({
@@ -706,27 +562,7 @@ describe('Email Sending Tools', () => {
       (mockJmapClient.request as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce(setupResponse)
         .mockResolvedValueOnce(sendResponse);
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'ME@EXAMPLE.COM' }] } })
-        
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            list: [{
-              messageId: ['<msg1@example.com>'],
-              subject: 'Hello',
-              from: [{ email: 'sender@example.com' }],
-              to: [{ email: 'me@example.com' }, { email: 'other@example.com' }],
-              cc: [{ email: 'me@example.com' }],
-            }],
-          },
-        })
-        .mockReturnValueOnce({ success: true, data: { created: { reply: { id: 'reply-1', blobId: 'blob-1', threadId: 'thread-1' } } } })
-        .mockReturnValueOnce({ success: true, data: { created: { submission: { id: 'submission-1' } } } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('reply_email')!;
 
       await tool.handler({
@@ -755,14 +591,7 @@ describe('Email Sending Tools', () => {
       };
 
       (mockJmapClient.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(setupResponse);
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'me@example.com' }] } })
-        
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({ success: true, data: { list: [] } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('reply_email')!;
 
       const result = await tool.handler({
@@ -800,14 +629,7 @@ describe('Email Sending Tools', () => {
       (mockJmapClient.request as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce(setupResponse)
         .mockResolvedValueOnce(sendResponse);
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'test@example.com' }] } })
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({ success: true, data: { created: { email: { id: 'email-1', blobId: 'blob-1', threadId: 'thread-1' } } } })
-        .mockReturnValueOnce({ success: true, data: { created: { submission: { id: 'submission-1' } } } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger, { signatureContent: mockSignature });
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger, { signatureContent: mockSignature });
       const tool = registeredTools.get('send_email')!;
 
       await tool.handler({
@@ -839,14 +661,7 @@ describe('Email Sending Tools', () => {
       (mockJmapClient.request as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce(setupResponse)
         .mockResolvedValueOnce(sendResponse);
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'test@example.com' }] } })
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({ success: true, data: { created: { email: { id: 'email-1', blobId: 'blob-1', threadId: 'thread-1' } } } })
-        .mockReturnValueOnce({ success: true, data: { created: { submission: { id: 'submission-1' } } } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger, { signatureContent: mockSignature });
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger, { signatureContent: mockSignature });
       const tool = registeredTools.get('send_email')!;
 
       await tool.handler({
@@ -878,14 +693,7 @@ describe('Email Sending Tools', () => {
       (mockJmapClient.request as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce(setupResponse)
         .mockResolvedValueOnce(sendResponse);
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'test@example.com' }] } })
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({ success: true, data: { created: { email: { id: 'email-1', blobId: 'blob-1', threadId: 'thread-1' } } } })
-        .mockReturnValueOnce({ success: true, data: { created: { submission: { id: 'submission-1' } } } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('send_email')!;
 
       await tool.handler({
@@ -917,14 +725,7 @@ describe('Email Sending Tools', () => {
       (mockJmapClient.request as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce(setupResponse)
         .mockResolvedValueOnce(sendResponse);
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'test@example.com' }] } })
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({ success: true, data: { created: { email: { id: 'email-1', blobId: 'blob-1', threadId: 'thread-1' } } } })
-        .mockReturnValueOnce({ success: true, data: { created: { submission: { id: 'submission-1' } } } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger, { defaultFrom: 'default@example.com' });
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger, { defaultFrom: 'default@example.com' });
       const tool = registeredTools.get('send_email')!;
 
       await tool.handler({
@@ -957,14 +758,7 @@ describe('Email Sending Tools', () => {
       (mockJmapClient.request as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce(setupResponse)
         .mockResolvedValueOnce(sendResponse);
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'test@example.com' }] } })
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({ success: true, data: { created: { email: { id: 'email-1', blobId: 'blob-1', threadId: 'thread-1' } } } })
-        .mockReturnValueOnce({ success: true, data: { created: { submission: { id: 'submission-1' } } } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger, { defaultFrom: 'default@example.com' });
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger, { defaultFrom: 'default@example.com' });
       const tool = registeredTools.get('send_email')!;
 
       await tool.handler({
@@ -996,14 +790,7 @@ describe('Email Sending Tools', () => {
       (mockJmapClient.request as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce(setupResponse)
         .mockResolvedValueOnce(sendResponse);
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'test@example.com' }] } })
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({ success: true, data: { created: { email: { id: 'email-1', blobId: 'blob-1', threadId: 'thread-1' } } } })
-        .mockReturnValueOnce({ success: true, data: { created: { submission: { id: 'submission-1' } } } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('send_email')!;
 
       await tool.handler({
@@ -1042,24 +829,7 @@ describe('Email Sending Tools', () => {
       (mockJmapClient.request as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce(setupResponse)
         .mockResolvedValueOnce(sendResponse);
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'me@example.com' }] } })
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            list: [{
-              messageId: ['<msg1@example.com>'],
-              subject: 'Original Subject',
-              from: [{ name: 'Sender', email: 'sender@example.com' }],
-            }],
-          },
-        })
-        .mockReturnValueOnce({ success: true, data: { created: { reply: { id: 'reply-1', blobId: 'blob-1', threadId: 'thread-1' } } } })
-        .mockReturnValueOnce({ success: true, data: { created: { submission: { id: 'submission-1' } } } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger, { signatureContent: mockSignature });
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger, { signatureContent: mockSignature });
       const tool = registeredTools.get('reply_email')!;
 
       await tool.handler({
@@ -1097,24 +867,7 @@ describe('Email Sending Tools', () => {
       (mockJmapClient.request as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce(setupResponse)
         .mockResolvedValueOnce(sendResponse);
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'me@example.com' }] } })
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            list: [{
-              messageId: ['<msg1@example.com>'],
-              subject: 'Original Subject',
-              from: [{ name: 'Sender', email: 'sender@example.com' }],
-            }],
-          },
-        })
-        .mockReturnValueOnce({ success: true, data: { created: { reply: { id: 'reply-1', blobId: 'blob-1', threadId: 'thread-1' } } } })
-        .mockReturnValueOnce({ success: true, data: { created: { submission: { id: 'submission-1' } } } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger, { defaultFrom: 'default@example.com' });
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger, { defaultFrom: 'default@example.com' });
       const tool = registeredTools.get('reply_email')!;
 
       await tool.handler({
@@ -1130,7 +883,7 @@ describe('Email Sending Tools', () => {
 
   describe('forward_email', () => {
     it('registers forward_email tool with correct metadata', () => {
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger);
 
       expect(registeredTools.has('forward_email')).toBe(true);
       const tool = registeredTools.get('forward_email')!;
@@ -1181,32 +934,7 @@ describe('Email Sending Tools', () => {
         .mockResolvedValueOnce(setupResponse)
         .mockResolvedValueOnce(sendResponse)
         .mockResolvedValueOnce(markResponse);
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'me@example.com' }] } })
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            list: [{
-              subject: 'Original Subject',
-              from: [{ name: 'Sender', email: 'sender@example.com' }],
-              to: [{ email: 'me@example.com' }],
-              sentAt: '2026-01-15T10:00:00Z',
-              textBody: [{ partId: 'text1' }],
-              htmlBody: [{ partId: 'html1' }],
-              bodyValues: {
-                text1: { value: 'Original body text' },
-                html1: { value: '<p>Original body text</p>' },
-              },
-              attachments: [],
-            }],
-          },
-        })
-        .mockReturnValueOnce({ success: true, data: { created: { forward: { id: 'forward-1', blobId: 'blob-1', threadId: 'thread-1' } } } })
-        .mockReturnValueOnce({ success: true, data: { created: { submission: { id: 'submission-1' } } } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('forward_email')!;
 
       const result = await tool.handler({
@@ -1271,31 +999,7 @@ describe('Email Sending Tools', () => {
         .mockResolvedValueOnce(setupResponse)
         .mockResolvedValueOnce(sendResponse)
         .mockResolvedValueOnce(markResponse);
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'me@example.com' }] } })
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            list: [{
-              subject: 'Original Subject',
-              from: [{ email: 'sender@example.com' }],
-              to: [{ email: 'me@example.com' }],
-              sentAt: '2026-01-15T10:00:00Z',
-              textBody: [{ partId: 'text1' }],
-              bodyValues: { text1: { value: 'Original body' } },
-              attachments: [
-                { blobId: 'blob-att-1', type: 'application/pdf', name: 'document.pdf', size: 1024 },
-                { blobId: 'blob-att-2', type: 'image/png', name: 'image.png', size: 2048 },
-              ],
-            }],
-          },
-        })
-        .mockReturnValueOnce({ success: true, data: { created: { forward: { id: 'forward-1', blobId: 'blob-1', threadId: 'thread-1' } } } })
-        .mockReturnValueOnce({ success: true, data: { created: { submission: { id: 'submission-1' } } } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('forward_email')!;
 
       await tool.handler({
@@ -1352,28 +1056,7 @@ describe('Email Sending Tools', () => {
         .mockResolvedValueOnce(setupResponse)
         .mockResolvedValueOnce(sendResponse)
         .mockResolvedValueOnce({ methodResponses: [] });
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'me@example.com' }] } })
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            list: [{
-              subject: 'Test',
-              from: [{ email: 'sender@example.com' }],
-              to: [{ email: 'me@example.com' }],
-              sentAt: '2026-01-15T10:00:00Z',
-              textBody: [{ partId: 'text1' }],
-              bodyValues: { text1: { value: 'Original body' } },
-              attachments: [],
-            }],
-          },
-        })
-        .mockReturnValueOnce({ success: true, data: { created: { forward: { id: 'forward-1', blobId: 'blob-1', threadId: 'thread-1' } } } })
-        .mockReturnValueOnce({ success: true, data: { created: { submission: { id: 'submission-1' } } } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('forward_email')!;
 
       await tool.handler({
@@ -1421,28 +1104,7 @@ describe('Email Sending Tools', () => {
         .mockResolvedValueOnce(setupResponse)
         .mockResolvedValueOnce(sendResponse)
         .mockResolvedValueOnce({ methodResponses: [] });
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'me@example.com' }] } })
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            list: [{
-              subject: 'Fwd: Already Forwarded',
-              from: [{ email: 'sender@example.com' }],
-              to: [{ email: 'me@example.com' }],
-              sentAt: '2026-01-15T10:00:00Z',
-              textBody: [{ partId: 'text1' }],
-              bodyValues: { text1: { value: 'Content' } },
-              attachments: [],
-            }],
-          },
-        })
-        .mockReturnValueOnce({ success: true, data: { created: { forward: { id: 'forward-1', blobId: 'blob-1', threadId: 'thread-1' } } } })
-        .mockReturnValueOnce({ success: true, data: { created: { submission: { id: 'submission-1' } } } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('forward_email')!;
 
       await tool.handler({
@@ -1486,28 +1148,7 @@ describe('Email Sending Tools', () => {
         .mockResolvedValueOnce(setupResponse)
         .mockResolvedValueOnce(sendResponse)
         .mockResolvedValueOnce({ methodResponses: [] });
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'me@example.com' }] } })
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            list: [{
-              subject: 'Hello World',
-              from: [{ email: 'sender@example.com' }],
-              to: [{ email: 'me@example.com' }],
-              sentAt: '2026-01-15T10:00:00Z',
-              textBody: [{ partId: 'text1' }],
-              bodyValues: { text1: { value: 'Content' } },
-              attachments: [],
-            }],
-          },
-        })
-        .mockReturnValueOnce({ success: true, data: { created: { forward: { id: 'forward-1', blobId: 'blob-1', threadId: 'thread-1' } } } })
-        .mockReturnValueOnce({ success: true, data: { created: { submission: { id: 'submission-1' } } } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('forward_email')!;
 
       await tool.handler({
@@ -1530,13 +1171,7 @@ describe('Email Sending Tools', () => {
       };
 
       (mockJmapClient.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(setupResponse);
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'me@example.com' }] } })
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({ success: true, data: { list: [] } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('forward_email')!;
 
       const result = await tool.handler({
@@ -1579,28 +1214,7 @@ describe('Email Sending Tools', () => {
         .mockResolvedValueOnce(setupResponse)
         .mockResolvedValueOnce(sendResponse)
         .mockResolvedValueOnce({ methodResponses: [] });
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'me@example.com' }] } })
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            list: [{
-              subject: 'Test',
-              from: [{ email: 'sender@example.com' }],
-              to: [{ email: 'me@example.com' }],
-              sentAt: '2026-01-15T10:00:00Z',
-              textBody: [{ partId: 'text1' }],
-              bodyValues: { text1: { value: 'Content' } },
-              attachments: [],
-            }],
-          },
-        })
-        .mockReturnValueOnce({ success: true, data: { created: { forward: { id: 'forward-1', blobId: 'blob-1', threadId: 'thread-1' } } } })
-        .mockReturnValueOnce({ success: true, data: { created: { submission: { id: 'submission-1' } } } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('forward_email')!;
 
       await tool.handler({
@@ -1653,28 +1267,7 @@ describe('Email Sending Tools', () => {
         .mockResolvedValueOnce(setupResponse)
         .mockResolvedValueOnce(sendResponse)
         .mockResolvedValueOnce({ methodResponses: [] });
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'me@example.com' }] } })
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            list: [{
-              subject: 'Test',
-              from: [{ email: 'sender@example.com' }],
-              to: [{ email: 'me@example.com' }],
-              sentAt: '2026-01-15T10:00:00Z',
-              textBody: [{ partId: 'text1' }],
-              bodyValues: { text1: { value: 'Content' } },
-              attachments: [],
-            }],
-          },
-        })
-        .mockReturnValueOnce({ success: true, data: { created: { forward: { id: 'forward-1', blobId: 'blob-1', threadId: 'thread-1' } } } })
-        .mockReturnValueOnce({ success: true, data: { created: { submission: { id: 'submission-1' } } } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger, { defaultFrom: 'default@example.com' });
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger, { defaultFrom: 'default@example.com' });
       const tool = registeredTools.get('forward_email')!;
 
       await tool.handler({
@@ -1723,28 +1316,7 @@ describe('Email Sending Tools', () => {
         .mockResolvedValueOnce(setupResponse)
         .mockResolvedValueOnce(sendResponse)
         .mockResolvedValueOnce(markResponse);
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'me@example.com' }] } })
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            list: [{
-              subject: 'Test',
-              from: [{ email: 'sender@example.com' }],
-              to: [{ email: 'me@example.com' }],
-              sentAt: '2026-01-15T10:00:00Z',
-              textBody: [{ partId: 'text1' }],
-              bodyValues: { text1: { value: 'Content' } },
-              attachments: [],
-            }],
-          },
-        })
-        .mockReturnValueOnce({ success: true, data: { created: { forward: { id: 'forward-1', blobId: 'blob-1', threadId: 'thread-1' } } } })
-        .mockReturnValueOnce({ success: true, data: { created: { submission: { id: 'submission-1' } } } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger);
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('forward_email')!;
 
       await tool.handler({
@@ -1794,28 +1366,7 @@ describe('Email Sending Tools', () => {
         .mockResolvedValueOnce(setupResponse)
         .mockResolvedValueOnce(sendResponse)
         .mockResolvedValueOnce({ methodResponses: [] });
-
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'identity1', name: 'Test User', email: 'me@example.com' }] } })
-        .mockReturnValueOnce({ success: true, data: { list: [{ id: 'sent-mailbox-1', role: 'sent' }, { id: 'drafts-mailbox-1', role: 'drafts' }] } })
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            list: [{
-              subject: 'Test',
-              from: [{ email: 'sender@example.com' }],
-              to: [{ email: 'me@example.com' }],
-              sentAt: '2026-01-15T10:00:00Z',
-              textBody: [{ partId: 'text1' }],
-              bodyValues: { text1: { value: 'Original body' } },
-              attachments: [],
-            }],
-          },
-        })
-        .mockReturnValueOnce({ success: true, data: { created: { forward: { id: 'forward-1', blobId: 'blob-1', threadId: 'thread-1' } } } })
-        .mockReturnValueOnce({ success: true, data: { created: { submission: { id: 'submission-1' } } } });
-
-      registerEmailSendingTools(mockServer, mockJmapClient, mockLogger, { signatureContent: mockSignature });
+      registerEmailSendingTools(mockServer, mockJmapClient.client, mockLogger, { signatureContent: mockSignature });
       const tool = registeredTools.get('forward_email')!;
 
       await tool.handler({

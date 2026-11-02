@@ -6,7 +6,7 @@ vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
 }));
 
 import { registerMailboxTools } from '../../../../src/mcp/tools/mailbox.js';
-import type { JMAPClient } from '../../../../src/jmap/client.js';
+import { createFakeJmap, type FakeJmap } from '../../../../src/testing/fake-jmap.js';
 import type { Logger } from '../../../../src/config/logger.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { setApprover } from '../../../../src/mcp/approval.js';
@@ -33,11 +33,11 @@ interface ToolRegistration {
 
 describe('Mailbox Management Tools', () => {
   let mockServer: McpServer;
-  let mockJmapClient: JMAPClient;
+  let mockJmapClient: FakeJmap;
   let mockLogger: Logger;
   let registeredTools: Map<string, ToolRegistration>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
 
     registeredTools = new Map();
@@ -76,11 +76,7 @@ describe('Mailbox Management Tools', () => {
 
     setApprover(mockServer, { mode: 'client', language: 'en', timeoutMs: 1000 });
 
-    mockJmapClient = {
-      getSession: vi.fn().mockReturnValue({ accountId: 'account1' }),
-      request: vi.fn(),
-      parseMethodResponse: vi.fn(),
-    } as unknown as JMAPClient;
+    mockJmapClient = await createFakeJmap('account1');
 
     mockLogger = {
       debug: vi.fn(),
@@ -92,7 +88,7 @@ describe('Mailbox Management Tools', () => {
 
   describe('create_mailbox', () => {
     it('registers create_mailbox tool with correct metadata', () => {
-      registerMailboxTools(mockServer, mockJmapClient, mockLogger);
+      registerMailboxTools(mockServer, mockJmapClient.client, mockLogger);
 
       expect(registeredTools.has('create_mailbox')).toBe(true);
       const tool = registeredTools.get('create_mailbox')!;
@@ -118,12 +114,8 @@ describe('Mailbox Management Tools', () => {
       (mockJmapClient.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
         createResponse
       );
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>).mockReturnValueOnce({
-        success: true,
-        data: { created: { new: { id: 'mailbox-123' } } },
-      });
 
-      registerMailboxTools(mockServer, mockJmapClient, mockLogger);
+      registerMailboxTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('create_mailbox')!;
 
       const result = await tool.handler({ name: 'My Custom Folder' });
@@ -149,12 +141,8 @@ describe('Mailbox Management Tools', () => {
       (mockJmapClient.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
         createResponse
       );
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>).mockReturnValueOnce({
-        success: true,
-        data: { created: { new: { id: 'mailbox-456' } } },
-      });
 
-      registerMailboxTools(mockServer, mockJmapClient, mockLogger);
+      registerMailboxTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('create_mailbox')!;
 
       const result = await tool.handler({ name: 'Subfolder', parentId: 'parent-123' });
@@ -183,12 +171,8 @@ describe('Mailbox Management Tools', () => {
       (mockJmapClient.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
         createResponse
       );
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>).mockReturnValueOnce({
-        success: true,
-        data: { created: { new: { id: 'mailbox-789' } } },
-      });
 
-      registerMailboxTools(mockServer, mockJmapClient, mockLogger);
+      registerMailboxTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('create_mailbox')!;
 
       await tool.handler({ name: '  Trimmed Name  ' });
@@ -213,12 +197,8 @@ describe('Mailbox Management Tools', () => {
       (mockJmapClient.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
         createResponse
       );
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>).mockReturnValueOnce({
-        success: true,
-        data: { created: { new: { id: 'mailbox-sub' } } },
-      });
 
-      registerMailboxTools(mockServer, mockJmapClient, mockLogger);
+      registerMailboxTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('create_mailbox')!;
 
       await tool.handler({ name: 'Subscribed Folder' });
@@ -247,16 +227,8 @@ describe('Mailbox Management Tools', () => {
       (mockJmapClient.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
         createResponse
       );
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>).mockReturnValueOnce({
-        success: true,
-        data: {
-          notCreated: {
-            new: { type: 'invalidProperties', description: 'name already exists' },
-          },
-        },
-      });
 
-      registerMailboxTools(mockServer, mockJmapClient, mockLogger);
+      registerMailboxTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('create_mailbox')!;
 
       const result = await tool.handler({ name: 'Existing Folder' });
@@ -268,7 +240,7 @@ describe('Mailbox Management Tools', () => {
 
   describe('rename_mailbox', () => {
     it('registers rename_mailbox tool with correct metadata', () => {
-      registerMailboxTools(mockServer, mockJmapClient, mockLogger);
+      registerMailboxTools(mockServer, mockJmapClient.client, mockLogger);
 
       expect(registeredTools.has('rename_mailbox')).toBe(true);
       const tool = registeredTools.get('rename_mailbox')!;
@@ -306,18 +278,7 @@ describe('Mailbox Management Tools', () => {
         .mockResolvedValueOnce(getResponse)
         .mockResolvedValueOnce(setResponse);
 
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            list: [
-              { id: 'mailbox-1', name: 'Old Name', role: null, myRights: { mayRename: true } },
-            ],
-          },
-        })
-        .mockReturnValueOnce({ success: true, data: { updated: { 'mailbox-1': null } } });
-
-      registerMailboxTools(mockServer, mockJmapClient, mockLogger);
+      registerMailboxTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('rename_mailbox')!;
 
       const result = await tool.handler({ mailboxId: 'mailbox-1', newName: 'New Name' });
@@ -354,18 +315,7 @@ describe('Mailbox Management Tools', () => {
         .mockResolvedValueOnce(getResponse)
         .mockResolvedValueOnce(setResponse);
 
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            list: [
-              { id: 'mailbox-1', name: 'Old Name', role: null, myRights: { mayRename: true } },
-            ],
-          },
-        })
-        .mockReturnValueOnce({ success: true, data: { updated: { 'mailbox-1': null } } });
-
-      registerMailboxTools(mockServer, mockJmapClient, mockLogger);
+      registerMailboxTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('rename_mailbox')!;
 
       const result = await tool.handler({
@@ -403,16 +353,8 @@ describe('Mailbox Management Tools', () => {
       };
 
       (mockJmapClient.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(getResponse);
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>).mockReturnValueOnce({
-        success: true,
-        data: {
-          list: [
-            { id: 'inbox-1', name: 'Inbox', role: 'inbox', myRights: { mayRename: false } },
-          ],
-        },
-      });
 
-      registerMailboxTools(mockServer, mockJmapClient, mockLogger);
+      registerMailboxTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('rename_mailbox')!;
 
       const result = await tool.handler({ mailboxId: 'inbox-1', newName: 'My Inbox' });
@@ -443,21 +385,8 @@ describe('Mailbox Management Tools', () => {
       };
 
       (mockJmapClient.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(getResponse);
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>).mockReturnValueOnce({
-        success: true,
-        data: {
-          list: [
-            {
-              id: 'shared-1',
-              name: 'Shared Folder',
-              role: null,
-              myRights: { mayRename: false },
-            },
-          ],
-        },
-      });
 
-      registerMailboxTools(mockServer, mockJmapClient, mockLogger);
+      registerMailboxTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('rename_mailbox')!;
 
       const result = await tool.handler({ mailboxId: 'shared-1', newName: 'Renamed' });
@@ -474,12 +403,8 @@ describe('Mailbox Management Tools', () => {
       };
 
       (mockJmapClient.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(getResponse);
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>).mockReturnValueOnce({
-        success: true,
-        data: { list: [], notFound: ['nonexistent'] },
-      });
 
-      registerMailboxTools(mockServer, mockJmapClient, mockLogger);
+      registerMailboxTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('rename_mailbox')!;
 
       const result = await tool.handler({ mailboxId: 'nonexistent', newName: 'Whatever' });
@@ -524,28 +449,7 @@ describe('Mailbox Management Tools', () => {
         .mockResolvedValueOnce(getResponse)
         .mockResolvedValueOnce(setResponse);
 
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            list: [
-              { id: 'mailbox-1', name: 'Original', role: null, myRights: { mayRename: true } },
-            ],
-          },
-        })
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            notUpdated: {
-              'mailbox-1': {
-                type: 'invalidProperties',
-                description: 'name already exists',
-              },
-            },
-          },
-        });
-
-      registerMailboxTools(mockServer, mockJmapClient, mockLogger);
+      registerMailboxTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('rename_mailbox')!;
 
       const result = await tool.handler({
@@ -560,7 +464,7 @@ describe('Mailbox Management Tools', () => {
 
   describe('delete_mailbox', () => {
     it('registers delete_mailbox tool with correct metadata', () => {
-      registerMailboxTools(mockServer, mockJmapClient, mockLogger);
+      registerMailboxTools(mockServer, mockJmapClient.client, mockLogger);
 
       expect(registeredTools.has('delete_mailbox')).toBe(true);
       const tool = registeredTools.get('delete_mailbox')!;
@@ -603,23 +507,7 @@ describe('Mailbox Management Tools', () => {
         .mockResolvedValueOnce(getResponse)
         .mockResolvedValueOnce(setResponse);
 
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            list: [
-              {
-                id: 'custom-1',
-                name: 'To Delete',
-                role: null,
-                myRights: { mayDelete: true },
-              },
-            ],
-          },
-        })
-        .mockReturnValueOnce({ success: true, data: { destroyed: ['custom-1'] } });
-
-      registerMailboxTools(mockServer, mockJmapClient, mockLogger);
+      registerMailboxTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('delete_mailbox')!;
 
       const result = await tool.handler({ mailboxId: 'custom-1' });
@@ -647,16 +535,8 @@ describe('Mailbox Management Tools', () => {
       };
 
       (mockJmapClient.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(getResponse);
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>).mockReturnValueOnce({
-        success: true,
-        data: {
-          list: [
-            { id: 'trash-1', name: 'Trash', role: 'trash', myRights: { mayDelete: false } },
-          ],
-        },
-      });
 
-      registerMailboxTools(mockServer, mockJmapClient, mockLogger);
+      registerMailboxTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('delete_mailbox')!;
 
       const result = await tool.handler({ mailboxId: 'trash-1' });
@@ -700,26 +580,7 @@ describe('Mailbox Management Tools', () => {
         .mockResolvedValueOnce(getResponse)
         .mockResolvedValueOnce(setResponse);
 
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            list: [
-              {
-                id: 'custom-2',
-                name: 'Has Emails',
-                role: null,
-                myRights: { mayDelete: true },
-              },
-            ],
-          },
-        })
-        .mockReturnValueOnce({
-          success: true,
-          data: { notDestroyed: { 'custom-2': { type: 'mailboxHasEmail' } } },
-        });
-
-      registerMailboxTools(mockServer, mockJmapClient, mockLogger);
+      registerMailboxTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('delete_mailbox')!;
 
       const result = await tool.handler({ mailboxId: 'custom-2' });
@@ -758,21 +619,7 @@ describe('Mailbox Management Tools', () => {
         .mockResolvedValueOnce(getResponse)
         .mockResolvedValueOnce(setResponse);
 
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            list: [
-              { id: 'parent-1', name: 'Parent', role: null, myRights: { mayDelete: true } },
-            ],
-          },
-        })
-        .mockReturnValueOnce({
-          success: true,
-          data: { notDestroyed: { 'parent-1': { type: 'mailboxHasChild' } } },
-        });
-
-      registerMailboxTools(mockServer, mockJmapClient, mockLogger);
+      registerMailboxTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('delete_mailbox')!;
 
       const result = await tool.handler({ mailboxId: 'parent-1' });
@@ -809,23 +656,7 @@ describe('Mailbox Management Tools', () => {
         .mockResolvedValueOnce(getResponse)
         .mockResolvedValueOnce(setResponse);
 
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            list: [
-              {
-                id: 'custom-3',
-                name: 'Force Delete',
-                role: null,
-                myRights: { mayDelete: true },
-              },
-            ],
-          },
-        })
-        .mockReturnValueOnce({ success: true, data: { destroyed: ['custom-3'] } });
-
-      registerMailboxTools(mockServer, mockJmapClient, mockLogger);
+      registerMailboxTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('delete_mailbox')!;
 
       const result = await tool.handler({ mailboxId: 'custom-3', force: true });
@@ -865,23 +696,7 @@ describe('Mailbox Management Tools', () => {
         .mockResolvedValueOnce(getResponse)
         .mockResolvedValueOnce(setResponse);
 
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            list: [
-              {
-                id: 'custom-4',
-                name: 'Default Delete',
-                role: null,
-                myRights: { mayDelete: true },
-              },
-            ],
-          },
-        })
-        .mockReturnValueOnce({ success: true, data: { destroyed: ['custom-4'] } });
-
-      registerMailboxTools(mockServer, mockJmapClient, mockLogger);
+      registerMailboxTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('delete_mailbox')!;
 
       // Note: In real usage, zod applies the default. In tests we pass explicitly.
@@ -913,16 +728,8 @@ describe('Mailbox Management Tools', () => {
       };
 
       (mockJmapClient.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(getResponse);
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>).mockReturnValueOnce({
-        success: true,
-        data: {
-          list: [
-            { id: 'shared-2', name: 'No Delete', role: null, myRights: { mayDelete: false } },
-          ],
-        },
-      });
 
-      registerMailboxTools(mockServer, mockJmapClient, mockLogger);
+      registerMailboxTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('delete_mailbox')!;
 
       const result = await tool.handler({ mailboxId: 'shared-2' });
@@ -939,12 +746,8 @@ describe('Mailbox Management Tools', () => {
       };
 
       (mockJmapClient.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(getResponse);
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>).mockReturnValueOnce({
-        success: true,
-        data: { list: [], notFound: ['nonexistent'] },
-      });
 
-      registerMailboxTools(mockServer, mockJmapClient, mockLogger);
+      registerMailboxTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('delete_mailbox')!;
 
       const result = await tool.handler({ mailboxId: 'nonexistent' });
@@ -986,25 +789,7 @@ describe('Mailbox Management Tools', () => {
         .mockResolvedValueOnce(getResponse)
         .mockResolvedValueOnce(setResponse);
 
-      (mockJmapClient.parseMethodResponse as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            list: [
-              { id: 'mailbox-x', name: 'Problematic', role: null, myRights: { mayDelete: true } },
-            ],
-          },
-        })
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            notDestroyed: {
-              'mailbox-x': { type: 'serverFail', description: 'Internal error' },
-            },
-          },
-        });
-
-      registerMailboxTools(mockServer, mockJmapClient, mockLogger);
+      registerMailboxTools(mockServer, mockJmapClient.client, mockLogger);
       const tool = registeredTools.get('delete_mailbox')!;
 
       const result = await tool.handler({ mailboxId: 'mailbox-x' });
