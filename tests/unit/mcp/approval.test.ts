@@ -165,6 +165,15 @@ describe('prior approval of writes', () => {
       expect(existsSync(join(home, 'Downloads'))).toBe(false);
     });
 
+    it('asks before keeping a small file the user wants saved, naming the folder', async () => {
+      const ok = await connect('accept');
+      const r = await ok.call('download_attachment', { blobId: 'small', name: 'a.pdf', save: true });
+      expect(r.error, r.text).toBe(false);
+      expect(ok.prompts).toHaveLength(1);
+      expect(ok.prompts[0]).toContain(join(home, 'Downloads'));
+      expect(existsSync(saved())).toBe(true);
+    });
+
     it('does not ask for a small file returned inline', async () => {
       const t = await connect('decline');
       const r = await t.call('download_attachment', { blobId: 'small', name: 'a.pdf' });

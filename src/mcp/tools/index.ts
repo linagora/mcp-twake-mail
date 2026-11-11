@@ -10,7 +10,7 @@ import { registerEmailTools } from './email.js';
 import { registerMailboxTools } from './mailbox.js';
 import { registerEmailOperationTools } from './email-operations.js';
 import { registerEmailSendingTools } from './email-sending.js';
-import { registerAttachmentTools } from './attachment.js';
+import { registerAttachmentTools, type AttachmentOptions } from './attachment.js';
 import { registerThreadTools } from './thread.js';
 import { registerBatchOperationTools } from './batch-operations.js';
 
@@ -33,7 +33,8 @@ export function registerAllTools(
   server: McpServer,
   jmapClient: JMAPClient,
   logger: Logger,
-  emailSendingOptions?: EmailSendingOptions
+  emailSendingOptions?: EmailSendingOptions,
+  attachmentOptions?: AttachmentOptions
 ): void {
   logger.debug('Registering MCP tools...');
 
@@ -50,7 +51,7 @@ export function registerAllTools(
   registerEmailSendingTools(server, jmapClient, logger, emailSendingOptions);
 
   // Register attachment tools (get_attachments)
-  registerAttachmentTools(server, jmapClient, logger);
+  registerAttachmentTools(server, jmapClient, logger, attachmentOptions);
 
   // Register thread tools (get_thread, get_thread_emails)
   registerThreadTools(server, jmapClient, logger);

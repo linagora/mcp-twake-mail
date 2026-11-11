@@ -4,6 +4,10 @@ All notable changes to mcp-twake-mail are documented here. The format follows [K
 
 ## [Unreleased]
 
+### Added
+- `download_attachment` takes `save: true` to keep any attachment on disk, whatever its size, and return its path instead of its content: an agent can then upload it to Twake Drive without passing it through the model. Saving still asks for the prior approval, which now names the folder.
+- `JMAP_DOWNLOAD_DIR` sets the folder where attachments are saved (`~` is the home folder); `~/Downloads` by default.
+
 ## [4.1.1] - 2026-11-11
 
 ### Fixed

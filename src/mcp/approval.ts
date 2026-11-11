@@ -13,7 +13,7 @@ export type ApprovalMode = 'elicit' | 'client';
 export type Language = 'en' | 'fr';
 
 const ACTIONS = {
-  download_attachment: { en: 'Save an attachment to ~/Downloads', fr: 'Enregistrer une pièce jointe dans ~/Downloads' },
+  download_attachment: { en: 'Save an attachment on this computer', fr: 'Enregistrer une pièce jointe sur cet ordinateur' },
   send_email: { en: 'Send an e-mail', fr: 'Envoyer un e-mail' },
   reply_email: { en: 'Send a reply', fr: 'Envoyer une réponse' },
   forward_email: { en: 'Forward an e-mail', fr: 'Transférer un e-mail' },

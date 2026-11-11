@@ -46,6 +46,8 @@ export const envSchema = z
     // Email identity and signature configuration
     JMAP_DEFAULT_FROM: z.string().email('JMAP_DEFAULT_FROM must be a valid email address').optional(),
     JMAP_SIGNATURE_PATH: z.string().optional(),
+    // Where download_attachment saves files (~ is the home folder); ~/Downloads by default
+    JMAP_DOWNLOAD_DIR: z.string().optional(),
     // Prior approval of every write: elicit = the server asks the user (MCP elicitation); client = the MCP client confirms
     JMAP_APPROVAL: z.enum(['elicit', 'client']).default('elicit'),
     JMAP_APPROVAL_TIMEOUT_MS: z.coerce.number().int().positive().default(600000),
