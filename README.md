@@ -190,6 +190,53 @@ Ref. 3f9a1c · Accept to do it now, refuse to cancel.
 - A client without elicitation support gets an error and nothing is done. Set `JMAP_APPROVAL=client` only if your MCP client asks you to confirm every write tool itself.
 - `JMAP_APPROVAL_EXEMPT` lets you lift the prompt for chosen tools only (empty by default).
 
+### Using several accounts
+
+The server serves **one account**: it fetches the JMAP session at `JMAP_SESSION_URL` and keeps the primary mail account of that session (`primaryAccounts["urn:ietf:params:jmap:mail"]`). The tools take no account: `list_mailboxes`, `search_emails`, `send_email`, the labels and the drafts all act on that account. The `from` parameter of the sending tools only chooses an identity that account may send as, not another mailbox.
+
+To use two accounts, run two servers, each with its own name and environment, and let your MCP client start both:
+
+```json
+{
+  "mcpServers": {
+    "twake-mail-work": {
+      "command": "npx",
+      "args": ["-y", "mcp-twake-mail"],
+      "env": {
+        "JMAP_SESSION_URL": "https://jmap.example.com/jmap/session",
+        "JMAP_AUTH_METHOD": "command",
+        "JMAP_TOKEN_COMMAND": "/usr/local/bin/mcp-twake-ai token mail",
+        "JMAP_DEFAULT_FROM": "jane.doe@example.com",
+        "JMAP_SIGNATURE_PATH": "~/.mcp-twake-mail/work.md"
+      }
+    },
+    "twake-mail-personal": {
+      "command": "npx",
+      "args": ["-y", "mcp-twake-mail"],
+      "env": {
+        "JMAP_SESSION_URL": "https://jmap.example.org/jmap/session",
+        "JMAP_AUTH_METHOD": "oidc",
+        "JMAP_OIDC_ISSUER": "https://sso.example.org",
+        "JMAP_OIDC_CLIENT_ID": "my-personal-client",
+        "JMAP_DEFAULT_FROM": "jane.doe@example.org",
+        "JMAP_SIGNATURE_PATH": "~/.mcp-twake-mail/personal.md"
+      }
+    }
+  }
+}
+```
+
+The two accounts may live on different servers (different `JMAP_SESSION_URL`, issuer and client id) or on the same one: each instance still opens its own session with its own credentials. Everything else is per instance too: the signature file, `JMAP_DOWNLOAD_DIR`, `JMAP_APPROVAL` and `JMAP_APPROVAL_EXEMPT`. Most agents show the tools of each server under its name, so a request should name the mailbox it means ("my work inbox"), and each write is approved by the instance that would do it.
+
+With [mcp-twake-ai](https://github.com/linagora/mcp-twake-ai), a sign-in holds one account, and signing in with another address replaces it (its Twake Drive, Chat and `setup --env` settings are left behind). Keep **one `TWAKE_AI_HOME` per account**, each with its own `login`:
+
+```bash
+TWAKE_AI_HOME=~/.twake-work     mcp-twake-ai login --email jane.doe@example.com
+TWAKE_AI_HOME=~/.twake-personal mcp-twake-ai login --email jane.doe@example.org
+```
+
+Then set `TWAKE_AI_HOME` in each server entry, next to its `JMAP_SESSION_URL` and `JMAP_TOKEN_COMMAND="/usr/local/bin/mcp-twake-ai token mail"`, so that the token command reads the session of the right account. `mcp-twake-ai setup` and `export` write such entries themselves.
+
 ## Use it with your assistant
 
 ### Claude Desktop
