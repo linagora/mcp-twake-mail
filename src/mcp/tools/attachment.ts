@@ -5,7 +5,7 @@
 import { z } from 'zod';
 import { writeFile, mkdir } from 'fs/promises';
 import { randomUUID } from 'crypto';
-import { basename, extname, join } from 'path';
+import { basename, extname, join, resolve } from 'path';
 import { homedir } from 'os';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
@@ -136,6 +136,18 @@ function filterAttachments(
   });
 }
 
+export interface AttachmentOptions {
+  /** Where download_attachment saves files (JMAP_DOWNLOAD_DIR); `~` is the home folder. Default ~/Downloads. */
+  downloadDir?: string;
+}
+
+/** The download folder, resolved when a file is saved: `~` stands for the home folder. */
+function downloadFolder(dir: string | undefined): string {
+  if (!dir) return join(homedir(), 'Downloads');
+  if (dir === '~' || dir.startsWith('~/')) return join(homedir(), dir.slice(1));
+  return resolve(dir);
+}
+
 /**
  * Register attachment MCP tools with the server.
  * @param server MCP server instance
@@ -145,7 +157,8 @@ function filterAttachments(
 export function registerAttachmentTools(
   server: McpServer,
   jmapClient: JMAPClient,
-  logger: Logger
+  logger: Logger,
+  options: AttachmentOptions = {}
 ): void {
   // get_attachments - list attachment metadata for an email (ATTACH-01, ATTACH-02)
   server.registerTool(
@@ -267,16 +280,21 @@ export function registerAttachmentTools(
     {
       title: 'Download Attachment',
       description:
-        'Download an attachment by its blobId. Small files (< 750KB) are returned as base64. Large files are automatically saved to ~/Downloads and the path is returned.',
+        'Download an attachment by its blobId. Small files (< 750KB) are returned as base64, unless save is true. Large files, and any file with save: true, are saved in the download folder after the user approves, and the path is returned: use save: true to keep a file, for example to upload it to Twake Drive.',
       inputSchema: {
         blobId: z.string().describe('The blob ID of the attachment to download (from get_attachments)'),
         name: z.string().optional().describe('Filename for the attachment'),
         type: z.string().optional().describe('MIME type of the attachment'),
+        save: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe('Save the file in the download folder whatever its size, and return its path instead of its content'),
       },
       annotations: ATTACHMENT_DOWNLOAD_ANNOTATIONS,
     },
-    async ({ blobId, name, type }) => {
-      logger.debug({ blobId, name, type }, 'download_attachment called');
+    async ({ blobId, name, type, save }) => {
+      logger.debug({ blobId, name, type, save }, 'download_attachment called');
 
       try {
         const filename = toFilename(name);
@@ -302,14 +320,17 @@ export function registerAttachmentTools(
         );
 
         // Decide whether to return inline or save to disk
-        if (data.byteLength > MAX_INLINE_SIZE) {
+        if (save || data.byteLength > MAX_INLINE_SIZE) {
+          const downloadDir = downloadFolder(options.downloadDir);
           const refused = await approverFor(server).gate('download_attachment', () => ({
             action: 'download_attachment',
-            details: [['attachments', filename]],
+            details: [
+              ['attachments', filename],
+              ['destination', downloadDir],
+            ],
           }));
           if (refused) return refused;
 
-          const downloadDir = join(homedir(), 'Downloads');
           await mkdir(downloadDir, { recursive: true });
           const outputPath = await writeNewFile(downloadDir, filename, buffer);
 
@@ -329,7 +350,7 @@ export function registerAttachmentTools(
                     mimeType: type || 'application/octet-stream',
                     size: data.byteLength,
                     savedTo: outputPath,
-                    message: `File saved to ${outputPath} (too large for inline response)`,
+                    message: `File saved to ${outputPath}${save ? '' : ' (too large for inline response)'}`,
                   },
                   null,
                   2

@@ -76,10 +76,13 @@ export async function startServer(): Promise<void> {
       timeZone: config.USER_TIMEZONE,
       exempt: (config.JMAP_APPROVAL_EXEMPT ?? '').split(',').map((t) => t.trim()).filter(Boolean),
     });
-    registerAllTools(server, jmapClient, logger, {
-      signatureContent,
-      defaultFrom: config.JMAP_DEFAULT_FROM,
-    });
+    registerAllTools(
+      server,
+      jmapClient,
+      logger,
+      { signatureContent, defaultFrom: config.JMAP_DEFAULT_FROM },
+      { downloadDir: config.JMAP_DOWNLOAD_DIR }
+    );
 
     // Step 6: Connect MCP server via stdio transport
     const transport = new StdioServerTransport();

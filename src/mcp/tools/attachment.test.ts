@@ -546,6 +546,22 @@ describe('registerAttachmentTools', () => {
       expect(existsSync(join(home, 'Downloads'))).toBe(false);
     });
 
+    it('keeps a small attachment on disk when asked to save it', async () => {
+      vi.mocked(mockJmapClient.downloadBlob).mockResolvedValue(new TextEncoder().encode('hello').buffer as ArrayBuffer);
+
+      const saved = await savedTo({ name: 'note.txt', save: true });
+
+      expect(saved).toBe(join(home, 'Downloads', 'note.txt'));
+      expect(readFileSync(saved, 'utf8')).toBe('hello');
+    });
+
+    it('saves into the download folder it is given, ~ meaning the home folder', async () => {
+      registerAttachmentTools(mockServer, mockJmapClient, mockLogger, { downloadDir: '~/Twake' });
+
+      expect(await savedTo({ name: 'a.bin' })).toBe(join(home, 'Twake', 'a.bin'));
+      expect(existsSync(join(home, 'Downloads'))).toBe(false);
+    });
+
     it('keeps the file in ~/Downloads whatever the name', async () => {
       expect(await savedTo({ name: '../outside/file.bin' })).toBe(join(home, 'Downloads', 'file.bin'));
       expect(existsSync(join(home, 'outside'))).toBe(false);
