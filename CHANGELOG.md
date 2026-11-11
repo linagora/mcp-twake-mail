@@ -4,6 +4,8 @@ All notable changes to mcp-twake-mail are documented here. The format follows [K
 
 ## [Unreleased]
 
+## [4.1.1] - 2026-11-11
+
 ### Fixed
 - `JMAP_TOKEN_COMMAND` runs through the system shell: `cmd.exe` on Windows, where `/bin/sh` does not exist and the server got no token, and `/bin/sh` on macOS and Linux as before.
 
