@@ -4,6 +4,9 @@ All notable changes to mcp-twake-mail are documented here. The format follows [K
 
 ## [Unreleased]
 
+### Added
+- The README has a "Using several accounts" section: the server serves the primary account of its JMAP session, so two mailboxes mean two server entries (or two `TWAKE_AI_HOME` with `mcp-twake-ai`), each with its own session, sender address, signature and approval settings.
+
 ## [4.2.0] - 2026-11-11
 
 ### Added
