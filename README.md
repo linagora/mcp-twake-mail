@@ -78,7 +78,17 @@ Used together, they let one assistant prepare a meeting from the invitation, the
 
 ## Installation
 
-**Interactive setup (recommended):**
+### Quick start with mcp-twake-ai (recommended)
+
+```bash
+npx mcp-twake-ai setup
+```
+
+[mcp-twake-ai](https://github.com/linagora/mcp-twake-wizard) sets up this server and the other Twake.ai MCP servers for your Twake.ai account: it asks for your email, signs you in at the Twake.ai identity provider (in the browser, or with a code over SSH), and finds the agents on your computer (Claude Code, Hermes, Claude Desktop, Cursor, VS Code) and the services of your account. It then installs pinned versions of the servers, writes their entries in each agent's configuration and checks that each server starts. For any other agent, `mcp-twake-ai export --agent <id>` writes the configuration files.
+
+### Manual installation
+
+**Interactive setup of this server only:**
 
 ```bash
 npx mcp-twake-mail setup
@@ -125,6 +135,8 @@ The server is configured through environment variables, usually set in your MCP 
 | **Token command** | `JMAP_SESSION_URL`, `JMAP_AUTH_METHOD=command`, `JMAP_TOKEN_COMMAND` |
 
 With **token command**, the server runs `JMAP_TOKEN_COMMAND` to get an access token, either raw on stdout or as JSON `{"access_token": "...", "expires_at": <epoch seconds>}`, and runs it again shortly before expiry. A single broker you control can then own the OIDC grant (and its refresh-token rotation) for several tools, and long-lived secrets stay out of the MCP client configuration.
+
+For Twake.ai, [mcp-twake-ai](https://github.com/linagora/mcp-twake-wizard) is that broker: `JMAP_TOKEN_COMMAND="/usr/local/bin/mcp-twake-ai token mail"`. Give the command with an absolute path, as some MCP clients do not see your `PATH`. It runs through the system shell (`sh`, or `cmd.exe` on Windows, where paths go in double quotes).
 
 See [docs/oidc-configuration.md](docs/oidc-configuration.md) and [docs/auto-discovery.md](docs/auto-discovery.md).
 
@@ -223,7 +235,7 @@ mcp_servers:
     env:
       JMAP_SESSION_URL: https://jmap.example.com/jmap/session
       JMAP_AUTH_METHOD: command
-      JMAP_TOKEN_COMMAND: /usr/local/bin/my-token-broker token
+      JMAP_TOKEN_COMMAND: /usr/local/bin/mcp-twake-ai token mail
       JMAP_SIGNATURE_PATH: ~/.mcp-twake-mail/signature.md
       JMAP_APPROVAL_TIMEOUT_MS: "330000"
       USER_LANGUAGE: fr
