@@ -4,6 +4,9 @@ All notable changes to mcp-twake-mail are documented here. The format follows [K
 
 ## [Unreleased]
 
+### Changed
+- Approval prompts name only the configured signature: any other text after a `-- ` line is shown, and so is the quoted original of a reply. `update_draft` keeps the quote of a reply draft when its body changes, and does not add a signature the draft was made without (#31).
+
 ### Added
 - `get_email` returns `messageId`, `inReplyTo` and `references`; `create_draft` takes `replyToEmailId` to thread a draft under an e-mail without handling Message-IDs (#30).
 - `reply_draft` prepares a reply as a draft: `Re:` subject, threading headers, recipients (reply-all optional), signature, then the quoted original ("On …, X wrote:", in French with `USER_LANGUAGE=fr`) (#31).

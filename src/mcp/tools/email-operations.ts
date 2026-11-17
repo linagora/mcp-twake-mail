@@ -11,6 +11,7 @@ import type { Logger } from '../../config/logger.js';
 import type { EmailSetResponse, Identity, EmailSubmissionSetResponse } from '../../types/jmap.js';
 import type { SignatureContent } from '../../signature/index.js';
 import { buildDraftBody } from './draft-body.js';
+import { findQuote } from './quote.js';
 import { approverFor } from '../approval.js';
 import { describeOriginal, ORIGINAL_PROPERTIES, threadingHeaders, type Original } from './reply.js';
 
@@ -1083,7 +1084,23 @@ export function registerEmailOperationTools(
           if (Array.isArray(value) && value.length) replacement[key] = value;
         }
         if (body !== undefined) {
-          Object.assign(replacement, buildDraftBody({ body, signature: signatureContent, includeSignature: true }));
+          // Keep what the new body does not replace: the quote of a reply draft, and no signature if it had none
+          const values = (draft.bodyValues ?? {}) as Record<string, { value: string }>;
+          const partOf = (parts: { partId?: string; type?: string }[] | undefined, type: string) => {
+            const p = parts?.find((x) => x.type === type);
+            return p?.partId ? values[p.partId]?.value : undefined;
+          };
+          const oldText = partOf(draft.textBody, 'text/plain');
+          const oldHtml = partOf(draft.htmlBody, 'text/html');
+          Object.assign(
+            replacement,
+            buildDraftBody({
+              body,
+              signature: signatureContent,
+              includeSignature: oldText === undefined || /\n-- \n/.test(oldText.replace(/\r\n/g, '\n')),
+              quote: findQuote(oldText, oldHtml),
+            })
+          );
         } else {
           const values = draft.bodyValues as Record<string, { value: string }> | undefined;
           const parts = [...(draft.textBody ?? []), ...(draft.htmlBody ?? [])] as { partId?: string }[];

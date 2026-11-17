@@ -45,3 +45,13 @@ export function buildQuote(o: QuoteSource, opts: { language: 'en' | 'fr'; timeZo
     : '';
   return { text: [header, ...lines].join('\n'), html: `<div class="quote"><p>${escapeHtml(header)}</p>${quoted}</div>` };
 }
+
+/**
+ * The quote of an existing reply draft (as buildQuote made it), to keep it when the draft's body changes:
+ * the attribution line and its "> " lines at the end of the text, the quote block at the end of the HTML.
+ */
+export function findQuote(text: string | undefined, html: string | undefined): { text: string; html: string } | undefined {
+  const t = /(?:^|\n\n)([^\n]*\n>[^\n]*(?:\n>[^\n]*)*)\s*$/.exec(text?.replace(/\r\n/g, '\n') ?? '');
+  const h = /<div class="quote">[\s\S]*<\/div>(?=\s*<\/body>)/.exec(html ?? '');
+  return t && h ? { text: t[1], html: h[0] } : undefined;
+}
