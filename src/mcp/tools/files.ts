@@ -2,7 +2,7 @@
  * Local folders and files: where attachments are saved (JMAP_DOWNLOAD_DIR) and the only files an
  * e-mail may carry (JMAP_UPLOAD_DIR), resolved through symbolic links so none leads outside.
  */
-import { readFile, realpath, stat } from 'fs/promises';
+import { mkdir, readFile, realpath, stat } from 'fs/promises';
 import { homedir } from 'os';
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'path';
 
@@ -11,6 +11,14 @@ export function localFolder(dir: string | undefined): string {
   if (!dir) return join(homedir(), 'Downloads');
   if (dir === '~' || dir.startsWith('~/')) return join(homedir(), dir.slice(1));
   return resolve(dir);
+}
+
+/**
+ * The only folder drafts take attachments from: JMAP_UPLOAD_DIR, else a dedicated Uploads folder inside
+ * the download folder, never the download folder itself (it holds whatever the user downloaded).
+ */
+export function uploadFolder(uploadDir: string | undefined, downloadDir?: string): string {
+  return uploadDir ? localFolder(uploadDir) : join(localFolder(downloadDir), 'Uploads');
 }
 
 const TYPES: Record<string, string> = {
@@ -97,7 +105,7 @@ export async function localFiles(root: string, paths: string[], maxSize?: number
   return files;
 }
 
-/** Where drafts take their attachments from (JMAP_UPLOAD_DIR, else the download folder). */
+/** Where drafts take their attachments from (see uploadFolder). */
 export interface DraftFileOptions {
   uploadDir?: string;
 }
@@ -109,8 +117,11 @@ export function maxSizeUpload(session: { capabilities?: unknown }): number | und
 }
 
 /** The files a draft asks for, checked against the upload folder and the server limit. */
-export function draftFiles(session: { capabilities?: unknown }, options: DraftFileOptions | undefined, paths: string[]): Promise<LocalFile[]> {
-  return localFiles(localFolder(options?.uploadDir), paths, maxSizeUpload(session));
+export async function draftFiles(session: { capabilities?: unknown }, options: DraftFileOptions | undefined, paths: string[]): Promise<LocalFile[]> {
+  const root = options?.uploadDir ? localFolder(options.uploadDir) : uploadFolder(undefined);
+  // Created when missing, private to the user: it is where they put the files to attach
+  await mkdir(root, { recursive: true, mode: 0o700 });
+  return localFiles(root, paths, maxSizeUpload(session));
 }
 
 /** How the approval prompt shows files not uploaded yet. */

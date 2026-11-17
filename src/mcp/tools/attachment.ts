@@ -139,7 +139,7 @@ function filterAttachments(
 export interface AttachmentOptions {
   /** Where download_attachment saves files (JMAP_DOWNLOAD_DIR); `~` is the home folder. Default ~/Downloads. */
   downloadDir?: string;
-  /** Folder whose files drafts may attach (JMAP_UPLOAD_DIR, else the download folder). */
+  /** Folder whose files drafts may attach (JMAP_UPLOAD_DIR, else <download folder>/Uploads). */
   uploadDir?: string;
 }
 

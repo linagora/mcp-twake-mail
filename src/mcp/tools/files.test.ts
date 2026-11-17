@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { contentType, humanSize, localFiles, promptFiles, uploadFiles } from './files.js';
+import { contentType, draftFiles, humanSize, localFiles, promptFiles, uploadFiles, uploadFolder } from './files.js';
+import { homedir } from 'node:os';
+import { existsSync } from 'node:fs';
 
 describe('localFiles', () => {
   let base: string;
@@ -101,6 +103,28 @@ describe('uploadFiles', () => {
     writeFileSync(join(base, 'devis.pdf'), 'a much longer content');
     const jmap = { uploadBlob: async () => ({ blobId: 'b' }) };
     await expect(uploadFiles(jmap, files)).rejects.toThrow(/devis\.pdf changed since it was checked/);
+    rmSync(base, { recursive: true, force: true });
+  });
+});
+
+describe('uploadFolder', () => {
+  it('is JMAP_UPLOAD_DIR when set', () => {
+    expect(uploadFolder('/srv/envoi', '~/Downloads/Twake')).toBe('/srv/envoi');
+    expect(uploadFolder('~/Envoi', undefined)).toBe(join(homedir(), 'Envoi'));
+  });
+
+  it('is otherwise a dedicated Uploads folder inside the download folder, never the download folder itself', () => {
+    expect(uploadFolder(undefined, '~/Downloads/Twake')).toBe(join(homedir(), 'Downloads', 'Twake', 'Uploads'));
+    expect(uploadFolder(undefined, undefined)).toBe(join(homedir(), 'Downloads', 'Uploads'));
+  });
+});
+
+describe('draftFiles', () => {
+  it('creates the upload folder when it is missing, so the user can put files there', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'mail-draftfiles-'));
+    const folder = join(base, 'Uploads');
+    await expect(draftFiles({}, { uploadDir: folder }, ['devis.pdf'])).rejects.toThrow(/File not found: devis\.pdf/);
+    expect(existsSync(folder)).toBe(true);
     rmSync(base, { recursive: true, force: true });
   });
 });

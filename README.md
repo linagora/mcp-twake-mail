@@ -149,7 +149,7 @@ See [docs/oidc-configuration.md](docs/oidc-configuration.md) and [docs/auto-disc
 | `JMAP_DEFAULT_FROM` | Default sender address | account identity |
 | `JMAP_SIGNATURE_PATH` | Markdown signature file (inline HTML allowed) | none |
 | `JMAP_DOWNLOAD_DIR` | Folder where `download_attachment` saves files (`~` is your home folder) | `~/Downloads` |
-| `JMAP_UPLOAD_DIR` | The only folder whose files `create_draft`, `reply_draft` and `update_draft` may attach (`~` is your home folder) | the download folder |
+| `JMAP_UPLOAD_DIR` | The only folder whose files `create_draft`, `reply_draft` and `update_draft` may attach (`~` is your home folder) | `Uploads` inside the download folder, created when needed |
 | `JMAP_REQUEST_TIMEOUT` | Request timeout (ms) | `30000` |
 | `LOG_LEVEL` | `fatal`, `error`, `warn`, `info`, `debug`, `trace` | `info` |
 | `JMAP_APPROVAL` | `elicit`: the server asks you before every write; `client`: your MCP client confirms | `elicit` |

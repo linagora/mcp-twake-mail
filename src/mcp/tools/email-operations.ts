@@ -784,7 +784,7 @@ export function registerEmailOperationTools(
           .array(z.string().min(1))
           .max(20)
           .optional()
-          .describe('Files to attach: paths inside the upload folder (JMAP_UPLOAD_DIR, by default the download folder), relative to it or absolute'),
+          .describe('Files to attach: paths inside the upload folder (JMAP_UPLOAD_DIR, by default the Uploads folder inside the download folder), relative to it or absolute'),
       },
       annotations: EMAIL_CREATE_ANNOTATIONS,
     },
@@ -1041,7 +1041,7 @@ export function registerEmailOperationTools(
           .array(z.string().min(1))
           .max(20)
           .optional()
-          .describe('Files to add to the draft: paths inside the upload folder (JMAP_UPLOAD_DIR, by default the download folder), relative to it or absolute'),
+          .describe('Files to add to the draft: paths inside the upload folder (JMAP_UPLOAD_DIR, by default the Uploads folder inside the download folder), relative to it or absolute'),
         removeAttachments: z.array(z.string()).optional().describe('Names of attachments to remove from the draft'),
         ifInState: z.string().optional().describe('Optional state for optimistic concurrency control (prevents overwriting concurrent edits)'),
       },

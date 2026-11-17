@@ -10,6 +10,7 @@ import { createLogger, type Logger } from '../config/logger.js';
 import { JMAPClient } from '../jmap/client.js';
 import { formatStartupError } from '../errors.js';
 import { registerAllTools } from './tools/index.js';
+import { uploadFolder } from './tools/files.js';
 import { setApprover } from './approval.js';
 import { loadSignature, type SignatureContent } from '../signature/index.js';
 
@@ -82,7 +83,7 @@ export async function startServer(): Promise<void> {
       jmapClient,
       logger,
       { signatureContent, defaultFrom: config.JMAP_DEFAULT_FROM },
-      { downloadDir: config.JMAP_DOWNLOAD_DIR, uploadDir: config.JMAP_UPLOAD_DIR ?? config.JMAP_DOWNLOAD_DIR }
+      { downloadDir: config.JMAP_DOWNLOAD_DIR, uploadDir: uploadFolder(config.JMAP_UPLOAD_DIR, config.JMAP_DOWNLOAD_DIR) }
     );
 
     // Step 6: Connect MCP server via stdio transport

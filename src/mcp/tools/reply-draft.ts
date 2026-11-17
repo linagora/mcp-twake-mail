@@ -55,7 +55,7 @@ export function registerReplyDraftTool(
           .array(z.string().min(1))
           .max(20)
           .optional()
-          .describe('Files to attach: paths inside the upload folder (JMAP_UPLOAD_DIR, by default the download folder), relative to it or absolute'),
+          .describe('Files to attach: paths inside the upload folder (JMAP_UPLOAD_DIR, by default the Uploads folder inside the download folder), relative to it or absolute'),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
