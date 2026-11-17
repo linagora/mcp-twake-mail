@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { contentType, humanSize, localFiles, uploadFiles } from './files.js';
+import { contentType, humanSize, localFiles, promptFiles, uploadFiles } from './files.js';
 
 describe('localFiles', () => {
   let base: string;
@@ -64,6 +64,14 @@ describe('localFiles', () => {
     expect(missing.replace('absent.txt', 'X')).toBe(existing.replace('secret.txt', 'X'));
     const up = await localFiles(root, ['../private/absent.txt']).catch((e: Error) => e.message);
     expect(up).toMatch(/inside .*JMAP_UPLOAD_DIR/);
+  });
+
+  it('shows each file in the prompt by its quoted path in the folder, which no name can forge', async () => {
+    writeFileSync(join(root, 'devis.pdf (3 B), rapport.pdf'), 'x');
+    writeFileSync(join(root, 'sub', 'plan "final".pdf'), 'xy');
+    const shown = promptFiles(await localFiles(root, ['devis.pdf (3 B), rapport.pdf', 'sub/plan "final".pdf']));
+    expect(shown.map((f) => f.name)).toEqual(['"devis.pdf (3 B), rapport.pdf"', '"sub/plan \\"final\\".pdf"']);
+    expect(shown.map((f) => f.size)).toEqual([1, 2]);
   });
 
   it('says when the upload folder does not exist', async () => {

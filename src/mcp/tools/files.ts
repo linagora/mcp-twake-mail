@@ -56,8 +56,10 @@ export function humanSize(bytes: number): string {
 export interface LocalFile {
   /** The real path, links resolved. */
   path: string;
-  /** The real file's name, without control characters: what the approval prompt shows. */
+  /** The real file's name, without control characters: the attachment's name. */
   name: string;
+  /** Its quoted path in the upload folder, which no file name can forge: what the approval prompt shows. */
+  shown: string;
   type: string;
   size: number;
   mtimeMs: number;
@@ -82,14 +84,15 @@ export async function localFiles(root: string, paths: string[], maxSize?: number
     const real = await realpath(full).catch(() => {
       throw new Error(`File not found: ${safeName(p)} (looked in ${root}).`);
     });
-    if (escapes(relative(realRoot, real))) throw outside(p);
+    const inFolder = relative(realRoot, real);
+    if (escapes(inFolder)) throw outside(p);
     const s = await stat(real);
     if (!s.isFile()) throw new Error(`${safeName(p)} is not a file: give a file inside ${root}.`);
     const name = safeName(basename(real));
     if (maxSize !== undefined && s.size > maxSize) {
       throw new Error(`${name} is ${humanSize(s.size)}, over the ${humanSize(maxSize)} the server accepts.`);
     }
-    files.push({ path: real, name, type: contentType(real), size: s.size, mtimeMs: s.mtimeMs });
+    files.push({ path: real, name, shown: JSON.stringify(safeName(inFolder)), type: contentType(real), size: s.size, mtimeMs: s.mtimeMs });
   }
   return files;
 }
@@ -111,7 +114,7 @@ export function draftFiles(session: { capabilities?: unknown }, options: DraftFi
 }
 
 /** How the approval prompt shows files not uploaded yet. */
-export const promptFiles = (files: LocalFile[]) => files.map((f) => ({ name: f.name, type: f.type, size: f.size }));
+export const promptFiles = (files: LocalFile[]) => files.map((f) => ({ name: f.shown, type: f.type, size: f.size }));
 
 /** Uploads each file and returns the attachments to put in Email/set. */
 export async function uploadFiles(

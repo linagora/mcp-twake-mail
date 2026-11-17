@@ -251,7 +251,7 @@ describe('prior approval of writes', () => {
     try {
       const yes = await connect('accept', { uploadDir: dir });
       await yes.call('create_draft', { to: ['bob.durand@example.com'], subject: 'Devis', body: 'Ci-joint.', attachments: ['devis.pdf'] });
-      expect(yes.prompts[0]).toContain('Pièces jointes : devis.pdf (3 B)');
+      expect(yes.prompts[0]).toContain('Pièces jointes : "devis.pdf" (3 B)');
       expect(yes.writes).toEqual(['upload', 'Email/set']);
       const no = await connect('decline', { uploadDir: dir });
       await no.call('create_draft', { to: ['bob.durand@example.com'], subject: 'Devis', body: 'Ci-joint.', attachments: ['devis.pdf'] });
