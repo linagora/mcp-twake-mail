@@ -35,3 +35,21 @@ export const formatAddress = (a: Address) => (a.name ? `${a.name} <${a.email}>` 
 export function describeOriginal(o: Original): string {
   return [o.from?.[0] ? formatAddress(o.from[0]) : undefined, o.subject || undefined].filter(Boolean).join(' · ');
 }
+
+/**
+ * Who a reply goes to: Reply-To, else From; with replyAll, also the original To (but the primary
+ * recipient) and Cc, never the user. null when the original has no address to answer.
+ */
+export function replyRecipients(o: Original, selfEmail: string | undefined, replyAll: boolean): { to: Address[]; cc: Address[] } | null {
+  const primary = o.replyTo?.[0] || o.from?.[0];
+  if (!primary) return null;
+  const to: Address[] = [primary];
+  const cc: Address[] = [];
+  if (replyAll) {
+    const self = selfEmail?.toLowerCase();
+    const same = (a: Address, b: string | undefined) => a.email.toLowerCase() === b;
+    for (const a of o.to ?? []) if (!same(a, self) && !same(a, primary.email.toLowerCase())) to.push(a);
+    for (const a of o.cc ?? []) if (!same(a, self)) cc.push(a);
+  }
+  return { to, cc };
+}

@@ -9,6 +9,7 @@ import type { SignatureContent } from '../../signature/index.js';
 import { registerEmailTools } from './email.js';
 import { registerMailboxTools } from './mailbox.js';
 import { registerEmailOperationTools } from './email-operations.js';
+import { registerReplyDraftTool } from './reply-draft.js';
 import { registerEmailSendingTools } from './email-sending.js';
 import { registerAttachmentTools, type AttachmentOptions } from './attachment.js';
 import { registerThreadTools } from './thread.js';
@@ -46,6 +47,9 @@ export function registerAllTools(
 
   // Register email operation tools (mark_as_read, mark_as_unread, delete_email)
   registerEmailOperationTools(server, jmapClient, logger, emailSendingOptions?.signatureContent);
+
+  // Register reply_draft (a reply prepared as a draft, quoting the original)
+  registerReplyDraftTool(server, jmapClient, logger, emailSendingOptions?.signatureContent);
 
   // Register email sending tools (send_email, reply_email) with signature and defaultFrom
   registerEmailSendingTools(server, jmapClient, logger, emailSendingOptions);

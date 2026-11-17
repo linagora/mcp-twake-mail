@@ -9,6 +9,8 @@ export interface DraftBodyInput {
   htmlBody?: string;
   signature?: SignatureContent;
   includeSignature?: boolean;
+  /** The quoted original of a reply, placed after the signature. */
+  quote?: { text: string; html: string };
 }
 
 export interface DraftBody {
@@ -58,6 +60,7 @@ export function buildDraftBody({
   htmlBody,
   signature,
   includeSignature = true,
+  quote,
 }: DraftBodyInput): DraftBody {
   let text = body ?? (htmlBody ? htmlToText(htmlBody) : '');
   let html = htmlBody ?? textToHtml(body ?? '');
@@ -66,6 +69,11 @@ export function buildDraftBody({
     text = `${text}\n\n-- \n${signature.text}`;
     html =
       `${html}\n<br>\n<div class="signature" style="color:#555555">-- <br>\n${signature.html}</div>`;
+  }
+
+  if (quote) {
+    text = `${text}\n\n${quote.text}`;
+    html = `${html}\n<br>\n${quote.html}`;
   }
 
   return {

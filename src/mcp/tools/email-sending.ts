@@ -15,7 +15,7 @@ import type {
 } from '../../types/jmap.js';
 import type { SignatureContent } from '../../signature/index.js';
 import { approverFor } from '../approval.js';
-import { describeOriginal, replySubject, threadingHeaders } from './reply.js';
+import { describeOriginal, replyRecipients, replySubject, threadingHeaders } from './reply.js';
 
 /**
  * Annotations for send operations (not idempotent - each call sends a new email).
@@ -576,9 +576,8 @@ export function registerEmailSendingTools(
         const subject = replySubject(original.subject);
 
         // Step 4: Build recipients
-        // Primary recipient: replyTo if available, otherwise from
-        const primaryRecipient = original.replyTo?.[0] || original.from?.[0];
-        if (!primaryRecipient) {
+        const recipients = replyRecipients(original, identity.email, replyAll);
+        if (!recipients) {
           logger.error({}, 'No recipient found in original email');
           return {
             isError: true,
@@ -590,28 +589,7 @@ export function registerEmailSendingTools(
             ],
           };
         }
-
-        const toAddresses: Array<{ name?: string; email: string }> = [primaryRecipient];
-        const ccAddresses: Array<{ name?: string; email: string }> = [];
-
-        if (replyAll) {
-          // Add all original 'to' recipients except self (case-insensitive)
-          const selfEmail = identity.email.toLowerCase();
-          for (const addr of original.to || []) {
-            if (addr.email.toLowerCase() !== selfEmail) {
-              // Avoid duplicates with primary recipient
-              if (addr.email.toLowerCase() !== primaryRecipient.email.toLowerCase()) {
-                toAddresses.push(addr);
-              }
-            }
-          }
-          // Add all original 'cc' recipients except self
-          for (const addr of original.cc || []) {
-            if (addr.email.toLowerCase() !== selfEmail) {
-              ccAddresses.push(addr);
-            }
-          }
-        }
+        const { to: toAddresses, cc: ccAddresses } = recipients;
 
         // Step 5: Build textBody/htmlBody for better server compatibility
         let textBody: Array<{ partId: string; type: string }> | undefined;

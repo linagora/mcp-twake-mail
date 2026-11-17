@@ -100,6 +100,7 @@ const WRITES: [string, Record<string, unknown>][] = [
   ['send_draft', { draftId: 'draft-1' }],
   ['create_draft', { to: ['bob.durand@example.com'], subject: 'Budget', body: 'Brouillon.' }],
   ['update_draft', { draftId: 'draft-1', subject: 'Proposition v2' }],
+  ['reply_draft', { originalEmailId: 'e1', body: 'Validé, merci.' }],
   ['mark_as_read', { emailId: 'e1' }],
   ['mark_as_unread', { emailId: 'e1' }],
   ['delete_email', { emailId: 'e1' }],
@@ -220,7 +221,12 @@ describe('prior approval of writes', () => {
     await t.call('batch_move', { emailIds: ['e1', 'e2'], targetMailboxId: 'mb-proj' });
     expect(t.prompts[3]).toContain('• Bob DURAND <bob.durand@example.com> · 2026-10-30 14:02 · Budget 2027');
     expect(t.prompts[3]).toContain('Destination : Inbox / Projets');
-    expect(new Set(t.prompts.map((p) => /Réf\. (\w+)/.exec(p)![1])).size).toBe(4);
+    await t.call('reply_draft', { originalEmailId: 'e1', body: 'OK.' });
+    expect(t.prompts[4]).toContain('Twake Mail : Créer un brouillon de réponse (non envoyé)');
+    expect(t.prompts[4]).toContain('En réponse à : Bob DURAND <bob.durand@example.com> · Budget 2027');
+    expect(t.prompts[4]).toContain('Objet : Re: Budget 2027');
+    expect(t.prompts[4]).toContain('Texte : \nOK.\n[signature comprise]');
+    expect(new Set(t.prompts.map((p) => /Réf\. (\w+)/.exec(p)![1])).size).toBe(5);
   });
 
   it('refuses to act when the client cannot ask, unless it confirms itself', async () => {

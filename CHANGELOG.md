@@ -6,6 +6,7 @@ All notable changes to mcp-twake-mail are documented here. The format follows [K
 
 ### Added
 - `get_email` returns `messageId`, `inReplyTo` and `references`; `create_draft` takes `replyToEmailId` to thread a draft under an e-mail without handling Message-IDs (#30).
+- `reply_draft` prepares a reply as a draft: `Re:` subject, threading headers, recipients (reply-all optional), signature, then the quoted original ("On …, X wrote:", in French with `USER_LANGUAGE=fr`) (#31).
 
 ## [4.2.0] - 2026-11-11
 

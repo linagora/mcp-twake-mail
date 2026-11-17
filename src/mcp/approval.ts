@@ -20,6 +20,7 @@ const ACTIONS = {
   send_draft: { en: 'Send a draft', fr: 'Envoyer un brouillon' },
   create_draft: { en: 'Create a draft (not sent)', fr: 'Créer un brouillon (non envoyé)' },
   update_draft: { en: 'Change a draft (not sent)', fr: 'Modifier un brouillon (non envoyé)' },
+  reply_draft: { en: 'Create a reply draft (not sent)', fr: 'Créer un brouillon de réponse (non envoyé)' },
   mark_as_read: { en: 'Mark as read', fr: 'Marquer comme lu' },
   mark_as_unread: { en: 'Mark as unread', fr: 'Marquer comme non lu' },
   delete_email: { en: 'Move to the trash', fr: 'Mettre à la corbeille' },
