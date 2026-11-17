@@ -2,14 +2,23 @@
  * The JMAP Email/query filter of search_emails (RFC 8621 §4.4.1).
  */
 
-/** A UTCDate as JMAP requires it ("2026-11-10T12:00:00Z"); a date alone is midnight UTC. */
+const ISO_8601 = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:\d{2})?)?$/;
+
+/**
+ * A UTCDate as JMAP requires it ("2026-11-10T12:00:00Z"). Only ISO 8601 is read, never guessed:
+ * a date alone is midnight UTC, a time without an offset is UTC.
+ */
 export function utcDate(value: string, field: 'before' | 'after'): string {
-  const v = value.trim();
-  const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(v) ? `${v}T00:00:00Z` : v);
-  if (Number.isNaN(d.getTime())) {
-    throw new Error(`${field}: "${value}" is not a date. Use ISO 8601, e.g. 2026-11-10 or 2026-11-10T13:00:00Z.`);
-  }
-  return d.toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const bad = new Error(`${field}: "${value}" is not a date. Use ISO 8601, e.g. 2026-11-10 or 2026-11-10T13:00:00Z.`);
+  const m = ISO_8601.exec(value.trim());
+  if (!m) throw bad;
+  const [, y, mo, d, h = '00', mi = '00', sec = '00', zone = 'Z'] = m;
+  const day = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d)));
+  const realDay = day.getUTCFullYear() === Number(y) && day.getUTCMonth() === Number(mo) - 1 && day.getUTCDate() === Number(d);
+  if (!realDay || Number(h) > 23 || Number(mi) > 59 || Number(sec) > 59) throw bad;
+  const date = new Date(`${y}-${mo}-${d}T${h}:${mi}:${sec}${zone}`);
+  if (Number.isNaN(date.getTime())) throw bad;
+  return date.toISOString().replace(/\.\d{3}Z$/, 'Z');
 }
 
 export interface SearchInput {

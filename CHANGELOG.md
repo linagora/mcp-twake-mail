@@ -16,7 +16,7 @@ All notable changes to mcp-twake-mail are documented here. The format follows [K
 
 ### Fixed
 - `list_mailboxes role=subscribed` returned nothing; it now lists the subscribed folders, and `role=unsubscribed` the hidden ones (#33).
-- `search_emails` `before`/`after` accept a date alone or a time with an offset: they are sent as UTC dates, which the server requires (a date like `2026-11-10` used to fail with "'/filter/after' property is not valid") (#34).
+- `search_emails` `before`/`after` read ISO 8601 only (a date alone is midnight UTC, a time without offset is UTC) and refuse anything else, such as `10/11/2026` or `2026-02-30`, instead of guessing; they are sent as UTC dates, which the server requires (a date like `2026-11-10` used to fail with "'/filter/after' property is not valid") (#34).
 
 ## [4.2.0] - 2026-11-11
 

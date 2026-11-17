@@ -8,6 +8,17 @@ describe('utcDate', () => {
     expect(utcDate('2026-11-10T13:00:00.250Z', 'before')).toBe('2026-11-10T13:00:00Z');
   });
 
+  it('reads a time without an offset as UTC, like a date alone', () => {
+    expect(utcDate('2026-11-10T13:00', 'after')).toBe('2026-11-10T13:00:00Z');
+    expect(utcDate('2026-11-10T13:00:05', 'after')).toBe('2026-11-10T13:00:05Z');
+  });
+
+  it('refuses dates that are not ISO 8601 instead of guessing them', () => {
+    for (const bad of ['10/11/2026', '2026-02-30', '1', '2026-11-10 13:00', 'November 10, 2026', '2026-13-01']) {
+      expect(() => utcDate(bad, 'after'), bad).toThrow(/is not a date/);
+    }
+  });
+
   it('rejects what it cannot read, naming the field and the expected form', () => {
     expect(() => utcDate('mardi', 'after')).toThrow(/after: "mardi" is not a date.*2026-11-10/);
   });
