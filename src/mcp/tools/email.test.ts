@@ -297,6 +297,69 @@ describe('registerEmailTools', () => {
     });
   });
 
+  describe('search_emails by participant', () => {
+    const EMAIL = {
+      id: 'e1',
+      blobId: 'b1',
+      threadId: 't1',
+      mailboxIds: { 'mb-inbox': true },
+      keywords: {},
+      receivedAt: '2026-11-10T10:00:00Z',
+      subject: 'Démonstration',
+      from: [{ email: 'bob@x.fr' }],
+      to: [{ email: 'me@y' }],
+      cc: [{ email: 'chloe@x.fr' }],
+    };
+    function answer() {
+      vi.mocked(mockJmapClient.request).mockImplementation(async (calls: [string, Record<string, unknown>, string][]) => ({
+        methodResponses: calls.map(([m, , id]) =>
+          m === 'Email/query'
+            ? [m, { ids: ['e1'], total: 41, position: 20 }, id]
+            : m === 'Email/get'
+              ? [m, { list: [EMAIL] }, id]
+              : [m, { list: [{ id: 'mb-inbox', name: 'Inbox' }] }, id]
+        ),
+      }));
+      vi.mocked(mockJmapClient.parseMethodResponse).mockImplementation((r) => ({ success: true, data: r[1] as Record<string, unknown> }));
+    }
+    type Query = [string, { filter: unknown; position: number; calculateTotal: boolean }];
+
+    it('searches a participant in every address, pages with position and names the mailboxes', async () => {
+      answer();
+
+      const result = await registeredTools.get('search_emails')!({ participant: 'x.fr', position: 20, limit: 20 });
+
+      expect(result.isError).toBeUndefined();
+      const [, query] = vi.mocked(mockJmapClient.request).mock.calls[0][0][0] as unknown as Query;
+      expect(query.filter).toEqual({ operator: 'OR', conditions: [{ from: 'x.fr' }, { to: 'x.fr' }, { cc: 'x.fr' }, { bcc: 'x.fr' }] });
+      expect(query.position).toBe(20);
+      expect(query.calculateTotal).toBe(true);
+      const out = JSON.parse(result.content[0].text);
+      expect(out).toMatchObject({ total: 41, position: 20, returned: 1 });
+      expect(out.emails[0].cc).toEqual([{ name: undefined, email: 'chloe@x.fr' }]);
+      expect(out.emails[0].mailboxNames).toEqual(['Inbox']);
+    });
+
+    it('sends dates as UTC dates', async () => {
+      answer();
+
+      await registeredTools.get('search_emails')!({ after: '2026-11-10', limit: 20 });
+
+      const [, query] = vi.mocked(mockJmapClient.request).mock.calls[0][0][0] as unknown as Query;
+      expect(query.filter).toEqual({ after: '2026-11-10T00:00:00Z' });
+    });
+
+    it('answers a date it cannot read without calling the server', async () => {
+      answer();
+
+      const result = await registeredTools.get('search_emails')!({ after: 'mardi', limit: 20 });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('is not a date');
+      expect(mockJmapClient.request).not.toHaveBeenCalled();
+    });
+  });
+
   describe('get_email_labels', () => {
     it('returns mailbox IDs for an email', async () => {
       vi.mocked(mockJmapClient.request).mockResolvedValue({

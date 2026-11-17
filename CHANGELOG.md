@@ -12,9 +12,11 @@ All notable changes to mcp-twake-mail are documented here. The format follows [K
 - `reply_draft` prepares a reply as a draft: `Re:` subject, threading headers, recipients (reply-all optional), signature, then the quoted original ("On …, X wrote:", in French with `USER_LANGUAGE=fr`) (#31).
 - `create_draft`, `reply_draft` and `update_draft` attach files from the upload folder (`JMAP_UPLOAD_DIR`; by default an `Uploads` folder inside the download folder, created when needed, never the download folder itself): paths outside it, also through symbolic links, are refused before anything is uploaded; the approval prompt lists each file by its real name (links resolved, control characters removed) with its size, and a file that changes after approval is not sent; `update_draft` also removes attachments by name (#32).
 - `set_mailbox_subscription` subscribes or unsubscribes existing folders (mail apps such as Thunderbird hide unsubscribed ones), under approval (#33).
+- `search_emails` takes `participant` (an address, name or domain in From, To, Cc or Bcc), `cc`, `bcc` and `position`; results show Cc and the names of their mailboxes (#34).
 
 ### Fixed
 - `list_mailboxes role=subscribed` returned nothing; it now lists the subscribed folders, and `role=unsubscribed` the hidden ones (#33).
+- `search_emails` `before`/`after` accept a date alone or a time with an offset: they are sent as UTC dates, which the server requires (a date like `2026-11-10` used to fail with "'/filter/after' property is not valid") (#34).
 
 ## [4.2.0] - 2026-11-11
 

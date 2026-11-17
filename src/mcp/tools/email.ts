@@ -8,6 +8,7 @@ import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import type { JMAPClient } from '../../jmap/client.js';
 import type { Logger } from '../../config/logger.js';
 import { transformEmail } from '../../transformers/email.js';
+import { buildSearchFilter } from './search-filter.js';
 
 /**
  * Common annotations for read-only email tools.
@@ -59,6 +60,7 @@ const SUMMARY_EMAIL_PROPERTIES = [
   'keywords',
   'from',
   'to',
+  'cc',
   'subject',
   'receivedAt',
   'preview',
@@ -173,10 +175,16 @@ export function registerEmailTools(
         mailboxId: z.string().optional().describe('Filter to emails in this mailbox'),
         from: z.string().optional().describe('Filter by sender email address or name'),
         to: z.string().optional().describe('Filter by recipient email address or name'),
+        cc: z.string().optional().describe('Filter by Cc address or name'),
+        bcc: z.string().optional().describe('Filter by Bcc address or name'),
+        participant: z
+          .string()
+          .optional()
+          .describe('An address, name or domain found in From, To, Cc or Bcc: all your exchanges with someone, in every mailbox'),
         subject: z.string().optional().describe('Filter by subject text'),
         text: z.string().optional().describe('Full-text search in email body'),
-        before: z.string().optional().describe('Filter to emails received before this date (ISO 8601)'),
-        after: z.string().optional().describe('Filter to emails received after this date (ISO 8601)'),
+        before: z.string().optional().describe('Filter to emails received before this date (ISO 8601; a date alone is midnight UTC)'),
+        after: z.string().optional().describe('Filter to emails received after this date (ISO 8601; a date alone is midnight UTC)'),
         hasAttachment: z.boolean().optional().describe('Filter to emails with attachments'),
         unreadOnly: z.boolean().optional().describe('Filter to unread emails only'),
         flagged: z.boolean().optional().describe('Filter to flagged/starred emails only'),
@@ -187,51 +195,24 @@ export function registerEmailTools(
           .max(100)
           .default(20)
           .describe('Maximum number of results (1-100, default 20)'),
+        position: z.number().int().min(0).default(0).describe('Index of the first result, to page through more than limit'),
       },
       annotations: EMAIL_READ_ANNOTATIONS,
     },
     async (args) => {
-      const { mailboxId, from, to, subject, text, before, after, hasAttachment, unreadOnly, flagged, limit } =
-        args;
+      const { limit, position } = args;
 
       logger.debug({ args }, 'search_emails called');
 
+      let filter: Record<string, unknown> | undefined;
+      try {
+        filter = buildSearchFilter(args);
+      } catch (error) {
+        return { isError: true, content: [{ type: 'text' as const, text: (error as Error).message }] };
+      }
+
       try {
         const session = jmapClient.getSession();
-
-        // Build JMAP filter from inputs
-        const filter: Record<string, unknown> = {};
-
-        if (mailboxId) {
-          filter.inMailbox = mailboxId;
-        }
-        if (from) {
-          filter.from = from;
-        }
-        if (to) {
-          filter.to = to;
-        }
-        if (subject) {
-          filter.subject = subject;
-        }
-        if (text) {
-          filter.text = text;
-        }
-        if (before) {
-          filter.before = before;
-        }
-        if (after) {
-          filter.after = after;
-        }
-        if (hasAttachment !== undefined) {
-          filter.hasAttachment = hasAttachment;
-        }
-        if (unreadOnly) {
-          filter.notKeyword = '$seen';
-        }
-        if (flagged) {
-          filter.hasKeyword = '$flagged';
-        }
 
         // Use back-reference pattern: Email/query -> Email/get with '#ids'
         const response = await jmapClient.request([
@@ -239,9 +220,11 @@ export function registerEmailTools(
             'Email/query',
             {
               accountId: session.accountId,
-              filter: Object.keys(filter).length > 0 ? filter : undefined,
+              filter,
               sort: [{ property: 'receivedAt', isAscending: false }],
+              position,
               limit,
+              calculateTotal: true,
             },
             'queryEmails',
           ],
@@ -258,6 +241,7 @@ export function registerEmailTools(
             },
             'getEmails',
           ],
+          ['Mailbox/get', { accountId: session.accountId, properties: ['id', 'name'] }, 'getMailboxNames'],
         ]);
 
         // Check query response
@@ -291,9 +275,15 @@ export function registerEmailTools(
         }
 
         const emails = (getResult.data?.list as unknown[]) || [];
-        const transformedEmails = emails.map((email) =>
-          transformEmail(email as Parameters<typeof transformEmail>[0])
+        // Mailbox names help read the results; without them, the ids stay
+        const mailboxResult = response.methodResponses[2] ? jmapClient.parseMethodResponse(response.methodResponses[2]) : undefined;
+        const names = new Map(
+          ((mailboxResult?.success ? (mailboxResult.data?.list as Array<{ id: string; name: string }>) : undefined) ?? []).map((m) => [m.id, m.name])
         );
+        const transformedEmails = emails.map((email) => {
+          const simplified = transformEmail(email as Parameters<typeof transformEmail>[0]);
+          return { ...simplified, mailboxNames: simplified.mailboxIds.map((id) => names.get(id) ?? id) };
+        });
 
         const totalFound = (queryResult.data?.total as number) || emails.length;
 
@@ -306,6 +296,7 @@ export function registerEmailTools(
               text: JSON.stringify(
                 {
                   total: totalFound,
+                  position,
                   returned: transformedEmails.length,
                   emails: transformedEmails,
                 },
