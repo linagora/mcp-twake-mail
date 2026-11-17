@@ -54,33 +54,42 @@ export function humanSize(bytes: number): string {
 }
 
 export interface LocalFile {
+  /** The real path, links resolved. */
   path: string;
+  /** The real file's name, without control characters: what the approval prompt shows. */
   name: string;
   type: string;
   size: number;
+  mtimeMs: number;
 }
+
+/** Control and format characters (but joiners) would let a file name forge lines in the prompt. */
+const safeName = (name: string) => name.replace(/(?!\p{Join_Control})[\p{Cc}\p{Cf}]/gu, '_');
+
+const escapes = (rel: string) => rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel);
 
 /** The files to attach, checked: inside `root` once links are resolved, regular files, within `maxSize`. */
 export async function localFiles(root: string, paths: string[], maxSize?: number): Promise<LocalFile[]> {
+  const outside = (p: string) => new Error(`${safeName(p)}: attachments must be inside ${root} (JMAP_UPLOAD_DIR). Copy the file there first.`);
   const realRoot = await realpath(root).catch(() => {
     throw new Error(`The upload folder ${root} does not exist (JMAP_UPLOAD_DIR): create it and put the files to attach there.`);
   });
   const files: LocalFile[] = [];
   for (const p of paths) {
-    const full = isAbsolute(p) ? p : join(root, p);
+    // Refuse a path outside the folder before touching the disk: the answer must not tell whether it exists
+    const full = resolve(root, p);
+    if (escapes(relative(resolve(root), full))) throw outside(p);
     const real = await realpath(full).catch(() => {
-      throw new Error(`File not found: ${p} (looked in ${root}).`);
+      throw new Error(`File not found: ${safeName(p)} (looked in ${root}).`);
     });
-    const rel = relative(realRoot, real);
-    if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-      throw new Error(`${p}: attachments must be inside ${root} (JMAP_UPLOAD_DIR). Copy the file there first.`);
-    }
+    if (escapes(relative(realRoot, real))) throw outside(p);
     const s = await stat(real);
-    if (!s.isFile()) throw new Error(`${p} is not a file: give a file inside ${root}.`);
+    if (!s.isFile()) throw new Error(`${safeName(p)} is not a file: give a file inside ${root}.`);
+    const name = safeName(basename(real));
     if (maxSize !== undefined && s.size > maxSize) {
-      throw new Error(`${basename(real)} is ${humanSize(s.size)}, over the ${humanSize(maxSize)} the server accepts.`);
+      throw new Error(`${name} is ${humanSize(s.size)}, over the ${humanSize(maxSize)} the server accepts.`);
     }
-    files.push({ path: real, name: basename(full), type: contentType(full), size: s.size });
+    files.push({ path: real, name, type: contentType(real), size: s.size, mtimeMs: s.mtimeMs });
   }
   return files;
 }
@@ -111,7 +120,16 @@ export async function uploadFiles(
 ): Promise<Array<{ blobId: string; type: string; name: string; disposition: 'attachment' }>> {
   const attachments = [];
   for (const f of files) {
-    const blob = await jmap.uploadBlob(await readFile(f.path), f.type);
+    // What leaves is what the user approved: same file, same size, unchanged since the check
+    const changed = new Error(`${f.name} changed since it was checked: nothing was attached. Ask again to attach it as it is now.`);
+    const real = await realpath(f.path).catch(() => {
+      throw changed;
+    });
+    const s = await stat(real);
+    if (real !== f.path || s.size !== f.size || s.mtimeMs !== f.mtimeMs) throw changed;
+    const data = await readFile(real);
+    if (data.byteLength !== f.size) throw changed;
+    const blob = await jmap.uploadBlob(data, f.type);
     attachments.push({ blobId: blob.blobId, type: f.type, name: f.name, disposition: 'attachment' as const });
   }
   return attachments;

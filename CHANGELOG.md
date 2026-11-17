@@ -10,7 +10,7 @@ All notable changes to mcp-twake-mail are documented here. The format follows [K
 ### Added
 - `get_email` returns `messageId`, `inReplyTo` and `references`; `create_draft` takes `replyToEmailId` to thread a draft under an e-mail without handling Message-IDs (#30).
 - `reply_draft` prepares a reply as a draft: `Re:` subject, threading headers, recipients (reply-all optional), signature, then the quoted original ("On …, X wrote:", in French with `USER_LANGUAGE=fr`) (#31).
-- `create_draft`, `reply_draft` and `update_draft` attach files from the upload folder (`JMAP_UPLOAD_DIR`, the download folder by default): paths outside it, also through symbolic links, are refused before anything is uploaded; the approval prompt lists each file with its size; `update_draft` also removes attachments by name (#32).
+- `create_draft`, `reply_draft` and `update_draft` attach files from the upload folder (`JMAP_UPLOAD_DIR`, the download folder by default): paths outside it, also through symbolic links, are refused before anything is uploaded; the approval prompt lists each file by its real name (links resolved, control characters removed) with its size, and a file that changes after approval is not sent; `update_draft` also removes attachments by name (#32).
 
 ## [4.2.0] - 2026-11-11
 
