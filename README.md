@@ -68,6 +68,7 @@ Used together, they let one assistant prepare a meeting from the invitation, the
 - **Reply drafts**: `reply_draft` prepares an answer without sending it: `Re:` subject, threading headers, recipients of the original (reply-all optional), your signature, then the quoted original ("On …, X wrote:", in French with `USER_LANGUAGE=fr`).
 - **Attachments on drafts**: `create_draft`, `reply_draft` and `update_draft` attach files taken from the upload folder only (`JMAP_UPLOAD_DIR`); a path outside it, also through a symbolic link, is refused, and the approval prompt lists each file with its size.
 - **Signatures**: a Markdown signature file is converted to HTML and plain text and appended to drafts and sent emails.
+- **All exchanges with someone**: `search_emails participant=<address, name or domain>` finds it in From, To, Cc or Bcc, in every mailbox, with `position` to page through the results and the mailbox names of each e-mail.
 - **Hidden folders**: a folder you cannot see in Thunderbird may just be unsubscribed: `list_mailboxes role=unsubscribed` finds it, `set_mailbox_subscription` shows it again.
 - **System folder protection**: Inbox, Sent, Drafts and Trash cannot be renamed or deleted.
 - **Large attachments** (> 750 KB) are saved to disk instead of being returned inline, in `~/Downloads` or `JMAP_DOWNLOAD_DIR`. `save: true` keeps any attachment on disk, to upload it to Twake Drive for instance.
