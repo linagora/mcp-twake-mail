@@ -39,6 +39,8 @@ const ACTIONS = {
   create_mailbox: { en: 'Create a folder', fr: 'Créer un dossier' },
   rename_mailbox: { en: 'Rename a folder', fr: 'Renommer un dossier' },
   delete_mailbox: { en: 'Delete a folder', fr: 'Supprimer un dossier' },
+  subscribe_mailbox: { en: 'Show folders in mail apps (subscribe)', fr: 'Afficher des dossiers dans les logiciels de messagerie (abonnement)' },
+  unsubscribe_mailbox: { en: 'Hide folders from mail apps (unsubscribe)', fr: 'Masquer des dossiers dans les logiciels de messagerie (désabonnement)' },
 } as const;
 
 const LABELS = {
