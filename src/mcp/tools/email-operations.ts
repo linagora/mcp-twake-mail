@@ -14,6 +14,7 @@ import { buildDraftBody } from './draft-body.js';
 import { findQuote } from './quote.js';
 import { approverFor } from '../approval.js';
 import { describeOriginal, ORIGINAL_PROPERTIES, threadingHeaders, type Original } from './reply.js';
+import { draftFiles, promptFiles, uploadFiles, type DraftFileOptions, type LocalFile } from './files.js';
 
 /**
  * Common annotations for non-destructive write operations.
@@ -74,7 +75,8 @@ export function registerEmailOperationTools(
   server: McpServer,
   jmapClient: JMAPClient,
   logger: Logger,
-  signatureContent?: SignatureContent
+  signatureContent?: SignatureContent,
+  fileOptions?: DraftFileOptions
 ): void {
   // mark_as_read - set $seen keyword (EMAIL-06)
   server.registerTool(
@@ -778,10 +780,15 @@ export function registerEmailOperationTools(
           .string()
           .optional()
           .describe('ID of the e-mail this draft answers: its Message-ID and references are filled in (use instead of inReplyTo)'),
+        attachments: z
+          .array(z.string().min(1))
+          .max(20)
+          .optional()
+          .describe('Files to attach: paths inside the upload folder (JMAP_UPLOAD_DIR, by default the Uploads folder inside the download folder), relative to it or absolute'),
       },
       annotations: EMAIL_CREATE_ANNOTATIONS,
     },
-    async ({ to, cc, bcc, subject, body, htmlBody, signature, inReplyTo, replyToEmailId }) => {
+    async ({ to, cc, bcc, subject, body, htmlBody, signature, inReplyTo, replyToEmailId, attachments }) => {
       logger.debug(
         { to, cc, bcc, subject, hasBody: !!body, hasHtmlBody: !!htmlBody, signature, inReplyTo, replyToEmailId },
         'create_draft called'
@@ -801,6 +808,16 @@ export function registerEmailOperationTools(
 
       try {
         const session = jmapClient.getSession();
+
+        // Check the files first: nothing is read from the server or uploaded for a file that cannot go
+        let files: LocalFile[] = [];
+        if (attachments?.length) {
+          try {
+            files = await draftFiles(session, fileOptions, attachments);
+          } catch (error) {
+            return { isError: true, content: [{ type: 'text' as const, text: (error as Error).message }] };
+          }
+        }
 
         // Get Drafts mailbox first (doesn't need submission capability), and the e-mail answered if any
         const mailboxResponse = await jmapClient.request([
@@ -918,8 +935,15 @@ export function registerEmailOperationTools(
         }
 
         // Create the draft
-        const refused = await approverFor(server).gate('create_draft', async () => ({ action: 'create_draft', details: [...approverFor(server).message(emailCreate), ['in_reply_to', original ? describeOriginal(original) : inReplyTo]] }));
+        const refused = await approverFor(server).gate('create_draft', async () => ({
+          action: 'create_draft',
+          details: [
+            ...approverFor(server).message(files.length ? { ...emailCreate, attachments: promptFiles(files) } : emailCreate),
+            ['in_reply_to', original ? describeOriginal(original) : inReplyTo],
+          ],
+        }));
         if (refused) return refused;
+        if (files.length) emailCreate.attachments = await uploadFiles(jmapClient, files);
         const createResponse = await jmapClient.request([
           [
             'Email/set',
@@ -1013,12 +1037,18 @@ export function registerEmailOperationTools(
         to: z.array(z.string().email()).optional().describe('New recipient list'),
         cc: z.array(z.string().email()).optional().describe('New CC list'),
         bcc: z.array(z.string().email()).optional().describe('New BCC list'),
+        attachments: z
+          .array(z.string().min(1))
+          .max(20)
+          .optional()
+          .describe('Files to add to the draft: paths inside the upload folder (JMAP_UPLOAD_DIR, by default the Uploads folder inside the download folder), relative to it or absolute'),
+        removeAttachments: z.array(z.string()).optional().describe('Names of attachments to remove from the draft'),
         ifInState: z.string().optional().describe('Optional state for optimistic concurrency control (prevents overwriting concurrent edits)'),
       },
       annotations: EMAIL_WRITE_ANNOTATIONS,
     },
-    async ({ draftId, subject, body, to, cc, bcc, ifInState }) => {
-      logger.debug({ draftId, subject, hasBody: !!body, to, cc, bcc, ifInState }, 'update_draft called');
+    async ({ draftId, subject, body, to, cc, bcc, attachments, removeAttachments, ifInState }) => {
+      logger.debug({ draftId, subject, hasBody: !!body, to, cc, bcc, attachments, removeAttachments, ifInState }, 'update_draft called');
 
       try {
         const changed = [
@@ -1027,6 +1057,7 @@ export function registerEmailOperationTools(
           to !== undefined && 'to',
           cc !== undefined && 'cc',
           bcc !== undefined && 'bcc',
+          (attachments?.length || removeAttachments?.length) && 'attachments',
         ].filter(Boolean) as string[];
         if (changed.length === 0) {
           return {
@@ -1034,7 +1065,7 @@ export function registerEmailOperationTools(
             content: [
               {
                 type: 'text' as const,
-                text: 'No fields to update. Please provide at least one field: subject, body, to, cc, or bcc.',
+                text: 'No fields to update. Please provide at least one field: subject, body, to, cc, bcc, attachments or removeAttachments.',
               },
             ],
           };
@@ -1043,6 +1074,14 @@ export function registerEmailOperationTools(
         // JMAP e-mails are immutable except keywords and mailboxes (RFC 8621 §4.6): a draft is changed
         // by creating its new version and destroying the old one, in one request.
         const session = jmapClient.getSession();
+        let files: LocalFile[] = [];
+        if (attachments?.length) {
+          try {
+            files = await draftFiles(session, fileOptions, attachments);
+          } catch (error) {
+            return { isError: true, content: [{ type: 'text' as const, text: (error as Error).message }] };
+          }
+        }
         const getResponse = await jmapClient.request([
           [
             'Email/get',
@@ -1108,15 +1147,27 @@ export function registerEmailOperationTools(
           if (draft.textBody?.length) replacement.textBody = draft.textBody.map(part);
           if (draft.htmlBody?.length) replacement.htmlBody = draft.htmlBody.map(part);
         }
-        if (Array.isArray(draft.attachments) && draft.attachments.length) {
-          replacement.attachments = draft.attachments.map((a: Record<string, unknown>) => ({ blobId: a.blobId, type: a.type, name: a.name, disposition: a.disposition ?? 'attachment' }));
+        let remaining = (Array.isArray(draft.attachments) ? draft.attachments : []) as Record<string, unknown>[];
+        for (const name of removeAttachments ?? []) {
+          if (!remaining.some((a) => a.name === name)) {
+            const names = remaining.map((a) => a.name).join(', ') || 'none';
+            return { isError: true, content: [{ type: 'text' as const, text: `No attachment named ${name} in this draft: it has ${names}.` }] };
+          }
+          remaining = remaining.filter((a) => a.name !== name);
         }
+        const keptAttachments = remaining.map((a) => ({ blobId: a.blobId, type: a.type, name: a.name, disposition: a.disposition ?? 'attachment' }));
+        if (keptAttachments.length) replacement.attachments = keptAttachments;
 
         const refused = await approverFor(server).gate('update_draft', async () => ({
           action: 'update_draft',
-          details: [['draft', await approverFor(server).emails(jmapClient, [draftId])], ['changes', changed.join(', ')], ...approverFor(server).message(replacement)],
+          details: [
+            ['draft', await approverFor(server).emails(jmapClient, [draftId])],
+            ['changes', changed.join(', ')],
+            ...approverFor(server).message({ ...replacement, attachments: [...remaining.map((a) => ({ name: a.name, size: a.size })), ...promptFiles(files)] }),
+          ],
         }));
         if (refused) return refused;
+        if (files.length) replacement.attachments = [...keptAttachments, ...(await uploadFiles(jmapClient, files))];
 
         const requestParams: Record<string, unknown> = {
           accountId: session.accountId,

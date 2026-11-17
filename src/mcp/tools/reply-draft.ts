@@ -11,6 +11,7 @@ import type { SignatureContent } from '../../signature/index.js';
 import { approverFor } from '../approval.js';
 import { buildDraftBody } from './draft-body.js';
 import { buildQuote } from './quote.js';
+import { draftFiles, promptFiles, uploadFiles, type DraftFileOptions, type LocalFile } from './files.js';
 import { describeOriginal, ORIGINAL_PROPERTIES, replyRecipients, replySubject, threadingHeaders, type Original } from './reply.js';
 
 const SUBMISSION_USING = ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail', 'urn:ietf:params:jmap:submission'];
@@ -29,7 +30,13 @@ function bodies(o: OriginalWithBody): { text?: string; html?: string } {
   return { text: value(o.textBody, 'text/plain'), html: value(o.htmlBody, 'text/html') };
 }
 
-export function registerReplyDraftTool(server: McpServer, jmapClient: JMAPClient, logger: Logger, signatureContent?: SignatureContent): void {
+export function registerReplyDraftTool(
+  server: McpServer,
+  jmapClient: JMAPClient,
+  logger: Logger,
+  signatureContent?: SignatureContent,
+  fileOptions?: DraftFileOptions
+): void {
   server.registerTool(
     'reply_draft',
     {
@@ -44,15 +51,28 @@ export function registerReplyDraftTool(server: McpServer, jmapClient: JMAPClient
         replyAll: z.boolean().default(false).describe('Also answer the original To and Cc (never yourself)'),
         quote: z.boolean().default(true).describe('Quote the original below the signature (default true)'),
         signature: z.boolean().default(true).describe('Append the configured signature (default true)'),
+        attachments: z
+          .array(z.string().min(1))
+          .max(20)
+          .optional()
+          .describe('Files to attach: paths inside the upload folder (JMAP_UPLOAD_DIR, by default the Uploads folder inside the download folder), relative to it or absolute'),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
-    async ({ originalEmailId, body, htmlBody, replyAll, quote, signature }) => {
+    async ({ originalEmailId, body, htmlBody, replyAll, quote, signature, attachments }) => {
       logger.debug({ originalEmailId, hasBody: !!body, hasHtmlBody: !!htmlBody, replyAll, quote, signature }, 'reply_draft called');
       if (!body && !htmlBody) return fail('Give body or htmlBody: the text of the reply, without signature or quote.');
 
       try {
         const session = jmapClient.getSession();
+        let files: LocalFile[] = [];
+        if (attachments?.length) {
+          try {
+            files = await draftFiles(session, fileOptions, attachments);
+          } catch (error) {
+            return fail((error as Error).message);
+          }
+        }
         const setup = await jmapClient.request([
           ['Mailbox/get', { accountId: session.accountId, properties: ['id', 'role'] }, 'getMailboxes'],
           [
@@ -110,9 +130,13 @@ export function registerReplyDraftTool(server: McpServer, jmapClient: JMAPClient
 
         const refused = await approverFor(server).gate('reply_draft', async () => ({
           action: 'reply_draft',
-          details: [['in_reply_to', describeOriginal(original)], ...approverFor(server).message(emailCreate)],
+          details: [
+            ['in_reply_to', describeOriginal(original)],
+            ...approverFor(server).message(files.length ? { ...emailCreate, attachments: promptFiles(files) } : emailCreate),
+          ],
         }));
         if (refused) return refused;
+        if (files.length) emailCreate.attachments = await uploadFiles(jmapClient, files);
 
         const response = await jmapClient.request([['Email/set', { accountId: session.accountId, create: { draft: emailCreate } }, 'createDraft']]);
         const result = jmapClient.parseMethodResponse(response.methodResponses[0]);

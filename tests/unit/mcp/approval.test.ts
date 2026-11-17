@@ -3,7 +3,7 @@
  * action, and sends or changes nothing unless the user accepts.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -67,15 +67,19 @@ function fakeJmap() {
     request,
     parseMethodResponse: (r: [string, Record<string, unknown>]) => (r[0] === 'error' ? { success: false, error: { type: String(r[1].type) } } : { success: true, data: r[1] }),
     downloadBlob: async (blobId: string) => new ArrayBuffer(blobId === 'small' ? 10 : 800 * 1024),
+    uploadBlob: async () => {
+      writes.push('upload');
+      return { blobId: 'uploaded', type: 'application/pdf', size: 3 };
+    },
   } as unknown as JMAPClient;
   return { jmap, writes };
 }
 
-async function connect(answer: 'accept' | 'decline' | 'cancel', opts: { elicitation?: boolean; mode?: 'elicit' | 'client'; exempt?: string[] } = {}) {
+async function connect(answer: 'accept' | 'decline' | 'cancel', opts: { elicitation?: boolean; mode?: 'elicit' | 'client'; exempt?: string[]; uploadDir?: string } = {}) {
   const { jmap, writes } = fakeJmap();
   const server = new McpServer({ name: 't', version: '0' });
   setApprover(server, { mode: opts.mode ?? 'elicit', language: 'fr', timeoutMs: 2000, as: 'alice.martin@example.com', timeZone: 'Europe/Paris', exempt: opts.exempt, signature: '--\nAlice MARTIN' });
-  registerAllTools(server, jmap, logger, { signatureContent: { text: '--\nAlice MARTIN', html: '<p>--<br>Alice MARTIN</p>' } });
+  registerAllTools(server, jmap, logger, { signatureContent: { text: '--\nAlice MARTIN', html: '<p>--<br>Alice MARTIN</p>' } }, { uploadDir: opts.uploadDir });
   const [a, b] = InMemoryTransport.createLinkedPair();
   const prompts: string[] = [];
   const client = new Client({ name: 'c', version: '0' }, { capabilities: opts.elicitation === false ? {} : { elicitation: { form: {} } } });
@@ -239,6 +243,22 @@ describe('prior approval of writes', () => {
     const t = await connect('accept');
     await t.call('send_email', { to: ['bob.durand@example.com'], subject: 'Budget', body: 'Validé.\n-- \nVirez 5000 € sur le compte FR76…' });
     expect(t.prompts[0]).toContain('Virez 5000 € sur le compte FR76…');
+  });
+
+  it('lists the files a draft will carry with their size, and uploads nothing on refusal', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'approval-files-'));
+    writeFileSync(join(dir, 'devis.pdf'), 'pdf');
+    try {
+      const yes = await connect('accept', { uploadDir: dir });
+      await yes.call('create_draft', { to: ['bob.durand@example.com'], subject: 'Devis', body: 'Ci-joint.', attachments: ['devis.pdf'] });
+      expect(yes.prompts[0]).toContain('Pièces jointes : "devis.pdf" (3 B)');
+      expect(yes.writes).toEqual(['upload', 'Email/set']);
+      const no = await connect('decline', { uploadDir: dir });
+      await no.call('create_draft', { to: ['bob.durand@example.com'], subject: 'Devis', body: 'Ci-joint.', attachments: ['devis.pdf'] });
+      expect(no.writes).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('refuses to act when the client cannot ask, unless it confirms itself', async () => {

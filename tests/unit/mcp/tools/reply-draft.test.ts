@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
   McpServer: vi.fn(),
@@ -140,5 +143,22 @@ describe('reply_draft', () => {
 
     expect(r.isError).toBeUndefined();
     expect(created().bodyValues.text.value).toMatch(/Bob DURAND <bob@x> a écrit :$/);
+  });
+
+  it('attaches files from the upload folder, and refuses one outside it', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'reply-files-'));
+    writeFileSync(join(base, 'devis.pdf'), 'pdf');
+    (jmap as any).uploadBlob = vi.fn(async () => ({ blobId: 'blob-1' }));
+    jmapAnswering(ORIGINAL);
+    registerReplyDraftTool(server, jmap, logger, undefined, { uploadDir: base });
+    const handler = handlers.get('reply_draft')!.handler;
+
+    const refused = await handler({ originalEmailId: 'e1', body: 'Ci-joint.', attachments: ['../etc/passwd'] });
+    expect(refused.isError).toBe(true);
+    expect((jmap as any).uploadBlob).not.toHaveBeenCalled();
+
+    await handler({ originalEmailId: 'e1', body: 'Ci-joint.', attachments: ['devis.pdf'] });
+    expect(created().attachments).toEqual([{ blobId: 'blob-1', type: 'application/pdf', name: 'devis.pdf', disposition: 'attachment' }]);
+    rmSync(base, { recursive: true, force: true });
   });
 });
