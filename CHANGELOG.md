@@ -4,6 +4,8 @@ All notable changes to mcp-twake-mail are documented here. The format follows [K
 
 ## [Unreleased]
 
+## [4.3.0] - 2026-11-17
+
 ### Changed
 - Approval prompts name only the configured signature: any other text after a `-- ` line is shown, and so is the quoted original of a reply. `update_draft` keeps the quote of a reply draft when its body changes, and does not add a signature the draft was made without (#31).
 
