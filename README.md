@@ -66,6 +66,7 @@ Used together, they let one assistant prepare a meeting from the invitation, the
 - **Auto-discovery**: configure with just your email address (DNS SRV, `.well-known/jmap`, OAuth metadata).
 - **Rich drafts**: `create_draft` builds a `multipart/alternative` message (plain text + HTML) from `body` (plain text, HTML generated) or `htmlBody` (rich formatting), and threads replies with `replyToEmailId` (the e-mail answered) or `inReplyTo` (its Message-ID, which `get_email` returns as `messageId`), filling the `In-Reply-To` and `References` headers.
 - **Reply drafts**: `reply_draft` prepares an answer without sending it: `Re:` subject, threading headers, recipients of the original (reply-all optional), your signature, then the quoted original ("On …, X wrote:", in French with `USER_LANGUAGE=fr`).
+- **Attachments on drafts**: `create_draft`, `reply_draft` and `update_draft` attach files taken from the upload folder only (`JMAP_UPLOAD_DIR`); a path outside it, also through a symbolic link, is refused, and the approval prompt lists each file with its size.
 - **Signatures**: a Markdown signature file is converted to HTML and plain text and appended to drafts and sent emails.
 - **System folder protection**: Inbox, Sent, Drafts and Trash cannot be renamed or deleted.
 - **Large attachments** (> 750 KB) are saved to disk instead of being returned inline, in `~/Downloads` or `JMAP_DOWNLOAD_DIR`. `save: true` keeps any attachment on disk, to upload it to Twake Drive for instance.
@@ -148,6 +149,7 @@ See [docs/oidc-configuration.md](docs/oidc-configuration.md) and [docs/auto-disc
 | `JMAP_DEFAULT_FROM` | Default sender address | account identity |
 | `JMAP_SIGNATURE_PATH` | Markdown signature file (inline HTML allowed) | none |
 | `JMAP_DOWNLOAD_DIR` | Folder where `download_attachment` saves files (`~` is your home folder) | `~/Downloads` |
+| `JMAP_UPLOAD_DIR` | The only folder whose files `create_draft`, `reply_draft` and `update_draft` may attach (`~` is your home folder) | the download folder |
 | `JMAP_REQUEST_TIMEOUT` | Request timeout (ms) | `30000` |
 | `LOG_LEVEL` | `fatal`, `error`, `warn`, `info`, `debug`, `trace` | `info` |
 | `JMAP_APPROVAL` | `elicit`: the server asks you before every write; `client`: your MCP client confirms | `elicit` |

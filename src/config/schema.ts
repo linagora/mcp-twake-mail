@@ -48,6 +48,8 @@ export const envSchema = z
     JMAP_SIGNATURE_PATH: z.string().optional(),
     // Where download_attachment saves files (~ is the home folder); ~/Downloads by default
     JMAP_DOWNLOAD_DIR: z.string().optional(),
+    // Folder whose files may be attached to drafts (~ is the home folder); the download folder by default
+    JMAP_UPLOAD_DIR: z.string().optional(),
     // Prior approval of every write: elicit = the server asks the user (MCP elicitation); client = the MCP client confirms
     JMAP_APPROVAL: z.enum(['elicit', 'client']).default('elicit'),
     JMAP_APPROVAL_TIMEOUT_MS: z.coerce.number().int().positive().default(600000),

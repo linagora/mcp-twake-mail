@@ -21,6 +21,7 @@ import { CommandTokenProvider } from '../auth/token-command.js';
 export interface JMAPSession {
   apiUrl: string;
   downloadUrl: string;
+  uploadUrl: string;
   accountId: string;
   capabilities: JMAPCapabilities;
   state: string;
@@ -141,10 +142,14 @@ export class JMAPClient {
     if (!sessionData.downloadUrl) {
       this.logger.warn('No downloadUrl in JMAP session - attachment downloads will not work');
     }
+    if (!sessionData.uploadUrl) {
+      this.logger.warn('No uploadUrl in JMAP session - attachments cannot be added to drafts');
+    }
 
     this.session = {
       apiUrl: sessionData.apiUrl,
       downloadUrl: sessionData.downloadUrl || '',
+      uploadUrl: sessionData.uploadUrl || '',
       accountId,
       capabilities: sessionData.capabilities,
       state: sessionData.state,
@@ -371,5 +376,46 @@ export class JMAPClient {
     }
 
     return response.arrayBuffer();
+  }
+
+  /**
+   * Upload a blob (a file to attach) to the JMAP server (RFC 8620 §6.1).
+   * @param data The file content
+   * @param type Its MIME type
+   * @returns The blob reference to put in an Email's attachments
+   * @throws JMAPError if the server has no upload URL or refuses the upload
+   */
+  async uploadBlob(data: Uint8Array, type: string): Promise<{ blobId: string; type: string; size: number }> {
+    const session = this.getSession();
+    if (!session.uploadUrl) {
+      throw new JMAPError(
+        'Upload URL not available',
+        'uploadUrlMissing',
+        'The JMAP server did not provide an upload URL in the session: attachments cannot be added.'
+      );
+    }
+    const url = session.uploadUrl.replace('{accountId}', encodeURIComponent(session.accountId));
+    this.logger.debug({ type, size: data.byteLength }, 'Uploading blob');
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: { ...(await this.getAuthHeaders()), 'Content-Type': type },
+        body: new Blob([data as Uint8Array<ArrayBuffer>]),
+        signal: AbortSignal.timeout(this.config.JMAP_REQUEST_TIMEOUT),
+      });
+    } catch (error) {
+      if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+        throw JMAPError.timeout('blob upload');
+      }
+      throw error;
+    }
+
+    if (!response.ok) {
+      throw JMAPError.httpError(response.status, response.statusText);
+    }
+
+    return (await response.json()) as { blobId: string; type: string; size: number };
   }
 }

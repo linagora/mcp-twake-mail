@@ -5,13 +5,13 @@
 import { z } from 'zod';
 import { writeFile, mkdir } from 'fs/promises';
 import { randomUUID } from 'crypto';
-import { basename, extname, join, resolve } from 'path';
-import { homedir } from 'os';
+import { basename, extname, join } from 'path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import type { JMAPClient } from '../../jmap/client.js';
 import type { Logger } from '../../config/logger.js';
 import { approverFor } from '../approval.js';
+import { localFolder } from './files.js';
 
 /** Maximum size for inline base64 response (750KB to stay under 1MB limit with overhead) */
 const MAX_INLINE_SIZE = 750 * 1024;
@@ -139,14 +139,11 @@ function filterAttachments(
 export interface AttachmentOptions {
   /** Where download_attachment saves files (JMAP_DOWNLOAD_DIR); `~` is the home folder. Default ~/Downloads. */
   downloadDir?: string;
+  /** Folder whose files drafts may attach (JMAP_UPLOAD_DIR, else the download folder). */
+  uploadDir?: string;
 }
 
 /** The download folder, resolved when a file is saved: `~` stands for the home folder. */
-function downloadFolder(dir: string | undefined): string {
-  if (!dir) return join(homedir(), 'Downloads');
-  if (dir === '~' || dir.startsWith('~/')) return join(homedir(), dir.slice(1));
-  return resolve(dir);
-}
 
 /**
  * Register attachment MCP tools with the server.
@@ -321,7 +318,7 @@ export function registerAttachmentTools(
 
         // Decide whether to return inline or save to disk
         if (save || data.byteLength > MAX_INLINE_SIZE) {
-          const downloadDir = downloadFolder(options.downloadDir);
+          const downloadDir = localFolder(options.downloadDir);
           const refused = await approverFor(server).gate('download_attachment', () => ({
             action: 'download_attachment',
             details: [

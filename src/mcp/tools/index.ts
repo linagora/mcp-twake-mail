@@ -46,10 +46,10 @@ export function registerAllTools(
   registerMailboxTools(server, jmapClient, logger);
 
   // Register email operation tools (mark_as_read, mark_as_unread, delete_email)
-  registerEmailOperationTools(server, jmapClient, logger, emailSendingOptions?.signatureContent);
+  registerEmailOperationTools(server, jmapClient, logger, emailSendingOptions?.signatureContent, { uploadDir: attachmentOptions?.uploadDir });
 
   // Register reply_draft (a reply prepared as a draft, quoting the original)
-  registerReplyDraftTool(server, jmapClient, logger, emailSendingOptions?.signatureContent);
+  registerReplyDraftTool(server, jmapClient, logger, emailSendingOptions?.signatureContent, { uploadDir: attachmentOptions?.uploadDir });
 
   // Register email sending tools (send_email, reply_email) with signature and defaultFrom
   registerEmailSendingTools(server, jmapClient, logger, emailSendingOptions);

@@ -82,7 +82,7 @@ export async function startServer(): Promise<void> {
       jmapClient,
       logger,
       { signatureContent, defaultFrom: config.JMAP_DEFAULT_FROM },
-      { downloadDir: config.JMAP_DOWNLOAD_DIR }
+      { downloadDir: config.JMAP_DOWNLOAD_DIR, uploadDir: config.JMAP_UPLOAD_DIR ?? config.JMAP_DOWNLOAD_DIR }
     );
 
     // Step 6: Connect MCP server via stdio transport

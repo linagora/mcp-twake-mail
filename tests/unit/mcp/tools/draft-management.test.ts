@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // Mock the MCP SDK
 vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
@@ -579,6 +582,118 @@ describe('Draft Management Tools', () => {
       expect(result.isError).toBeUndefined();
       expect(vi.mocked(mockJmapClient.request).mock.calls[0][0]).toHaveLength(1);
       expect(setCall()![1].create.draft.inReplyTo).toEqual(['m2@x']);
+    });
+  });
+
+  describe('attachments', () => {
+    let base: string;
+    let root: string;
+
+    beforeEach(() => {
+      base = mkdtempSync(join(tmpdir(), 'draft-files-'));
+      root = join(base, 'uploads');
+      mkdirSync(root);
+      writeFileSync(join(root, 'devis.pdf'), 'pdf');
+      writeFileSync(join(root, 'plan.png'), 'png!');
+      writeFileSync(join(base, 'secret.txt'), 'secret');
+      (mockJmapClient as any).uploadBlob = vi.fn(async (_data: Uint8Array, type: string) => ({ blobId: `blob-${type}`, type, size: 3 }));
+      vi.mocked(mockJmapClient.getSession).mockReturnValue({ accountId: 'account1', capabilities: { 'urn:ietf:params:jmap:core': { maxSizeUpload: 1000 } } } as any);
+    });
+    afterEach(() => rmSync(base, { recursive: true, force: true }));
+
+    const register = () => registerEmailOperationTools(mockServer, mockJmapClient, mockLogger, undefined, { uploadDir: root });
+    const setCall = () => vi.mocked(mockJmapClient.request).mock.calls.map((c) => c[0][0]).find(([m]: any) => m === 'Email/set');
+    function mockCreate() {
+      vi.mocked(mockJmapClient.request)
+        .mockResolvedValueOnce({ methodResponses: [['Mailbox/get', { list: [{ id: 'mb-drafts', role: 'drafts' }] }, 'getMailboxes']] })
+        .mockRejectedValueOnce(new Error('no submission capability'))
+        .mockResolvedValueOnce({ methodResponses: [['Email/set', { created: { draft: { id: 'd1', threadId: 't1' } } }, 'createDraft']] });
+      vi.mocked(mockJmapClient.parseMethodResponse).mockImplementation((r: any) => ({ success: true, data: r[1] }));
+    }
+
+    it('create_draft uploads the files and attaches them to the draft', async () => {
+      register();
+      mockCreate();
+
+      const result = await registeredTools.get('create_draft')!.handler({ to: ['bob@x'], body: 'Ci-joint.', attachments: ['devis.pdf'] });
+
+      expect(result.isError).toBeUndefined();
+      expect((mockJmapClient as any).uploadBlob).toHaveBeenCalledTimes(1);
+      expect(setCall()![1].create.draft.attachments).toEqual([{ blobId: 'blob-application/pdf', type: 'application/pdf', name: 'devis.pdf', disposition: 'attachment' }]);
+    });
+
+    it('create_draft refuses a file outside the upload folder before uploading anything', async () => {
+      register();
+      mockCreate();
+
+      const result = await registeredTools.get('create_draft')!.handler({ body: 'x', attachments: ['../secret.txt'] });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toMatch(/inside .*JMAP_UPLOAD_DIR/);
+      expect((mockJmapClient as any).uploadBlob).not.toHaveBeenCalled();
+      expect(setCall()).toBeUndefined();
+    });
+
+    it('create_draft refuses a file over the server limit', async () => {
+      register();
+      mockCreate();
+      vi.mocked(mockJmapClient.getSession).mockReturnValue({ accountId: 'account1', capabilities: { 'urn:ietf:params:jmap:core': { maxSizeUpload: 2 } } } as any);
+
+      const result = await registeredTools.get('create_draft')!.handler({ body: 'x', attachments: ['devis.pdf'] });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('over the 2 B the server accepts');
+      expect((mockJmapClient as any).uploadBlob).not.toHaveBeenCalled();
+    });
+
+    const DRAFT = {
+      id: 'draft-1',
+      from: [{ email: 'alice@x' }],
+      to: [{ email: 'bob@x' }],
+      subject: 'Devis',
+      mailboxIds: { 'mb-drafts': true },
+      keywords: { $draft: true, $seen: true },
+      textBody: [{ partId: '1', type: 'text/plain' }],
+      htmlBody: [{ partId: '1', type: 'text/plain' }],
+      bodyValues: { '1': { value: 'Ci-joint.' } },
+      attachments: [{ blobId: 'blob-a', type: 'application/pdf', name: 'devis.pdf', size: 1000 }],
+    };
+    function mockUpdate() {
+      vi.mocked(mockJmapClient.request)
+        .mockResolvedValueOnce({ methodResponses: [['Email/get', { list: [DRAFT] }, 'getDraft']] })
+        .mockResolvedValueOnce({ methodResponses: [['Email/set', { created: { draft: { id: 'draft-2' } }, destroyed: ['draft-1'] }, 'updateDraft']] });
+      vi.mocked(mockJmapClient.parseMethodResponse).mockImplementation((r: any) => ({ success: true, data: r[1] }));
+    }
+
+    it('update_draft adds files to the attachments a draft has, and removes some by name', async () => {
+      register();
+      mockUpdate();
+
+      const result = await registeredTools.get('update_draft')!.handler({ draftId: 'draft-1', attachments: ['plan.png'], removeAttachments: ['devis.pdf'] });
+
+      expect(result.isError).toBeUndefined();
+      expect(JSON.parse(result.content[0].text).updated).toEqual(['attachments']);
+      expect(setCall()![1].create.draft.attachments).toEqual([{ blobId: 'blob-image/png', type: 'image/png', name: 'plan.png', disposition: 'attachment' }]);
+    });
+
+    it('update_draft keeps the attachments it already had when adding one', async () => {
+      register();
+      mockUpdate();
+
+      await registeredTools.get('update_draft')!.handler({ draftId: 'draft-1', attachments: ['plan.png'] });
+
+      expect(setCall()![1].create.draft.attachments.map((a: any) => a.name)).toEqual(['devis.pdf', 'plan.png']);
+    });
+
+    it('update_draft says which attachment to remove does not exist, and changes nothing', async () => {
+      register();
+      mockUpdate();
+
+      const result = await registeredTools.get('update_draft')!.handler({ draftId: 'draft-1', removeAttachments: ['absent.pdf'] });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('No attachment named absent.pdf in this draft: it has devis.pdf');
+      expect(setCall()).toBeUndefined();
     });
   });
 });

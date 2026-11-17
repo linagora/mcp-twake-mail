@@ -390,6 +390,43 @@ describe('JMAPClient', () => {
       expect(client.getState('Mailbox')).toBeUndefined();
     });
   });
+
+  describe('uploadBlob', () => {
+    const withUpload = { ...validSessionResponse, uploadUrl: 'https://jmap.example.com/upload/{accountId}/' };
+
+    it('posts the bytes to the upload URL with their type and returns the blob', async () => {
+      fetchMocker.mockResponseOnce(JSON.stringify(withUpload));
+      fetchMocker.mockResponseOnce(JSON.stringify({ accountId: 'account-123', blobId: 'blob-9', type: 'application/pdf', size: 3 }));
+      const client = new JMAPClient(mockConfig, mockLogger);
+      await client.fetchSession();
+
+      const blob = await client.uploadBlob(new Uint8Array([1, 2, 3]), 'application/pdf');
+
+      expect(blob).toMatchObject({ blobId: 'blob-9', type: 'application/pdf', size: 3 });
+      const [url, options] = fetchMocker.mock.calls[1];
+      expect(url).toBe('https://jmap.example.com/upload/account-123/');
+      expect(options?.method).toBe('POST');
+      expect((options?.headers as Record<string, string>)['Content-Type']).toBe('application/pdf');
+      expect(options?.headers).toHaveProperty('Authorization');
+    });
+
+    it('reports an HTTP refusal', async () => {
+      fetchMocker.mockResponseOnce(JSON.stringify(withUpload));
+      fetchMocker.mockResponseOnce('too large', { status: 413, statusText: 'Payload Too Large' });
+      const client = new JMAPClient(mockConfig, mockLogger);
+      await client.fetchSession();
+
+      await expect(client.uploadBlob(new Uint8Array([1]), 'application/pdf')).rejects.toBeInstanceOf(JMAPError);
+    });
+
+    it('says when the server gives no upload URL', async () => {
+      fetchMocker.mockResponseOnce(JSON.stringify(validSessionResponse));
+      const client = new JMAPClient(mockConfig, mockLogger);
+      await client.fetchSession();
+
+      await expect(client.uploadBlob(new Uint8Array([1]), 'application/pdf')).rejects.toMatchObject({ type: 'uploadUrlMissing' });
+    });
+  });
 });
 
 describe('JMAPClient OIDC auth', () => {

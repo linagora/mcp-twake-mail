@@ -8,6 +8,7 @@
 import { randomBytes } from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { JMAPClient } from '../jmap/client.js';
+import { humanSize } from './tools/files.js';
 
 export type ApprovalMode = 'elicit' | 'client';
 export type Language = 'en' | 'fr';
@@ -154,7 +155,9 @@ export class Approver {
     if (text && signature && at >= 0) {
       text = `${text.slice(0, at).trimEnd()}\n[${this.label('signature')}]${text.slice(at + `\n-- \n${signature}`.length)}`;
     }
-    const files = (e.attachments as { name?: string; size?: number }[] | undefined)?.map((a) => a.name ?? 'file');
+    const files = (e.attachments as { name?: string; size?: number }[] | undefined)?.map((a) =>
+      typeof a.size === 'number' ? `${a.name ?? 'file'} (${humanSize(a.size)})` : (a.name ?? 'file'),
+    );
     return [
       ['from', addrs(e.from)],
       ['to', addrs(e.to)],
