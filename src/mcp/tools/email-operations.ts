@@ -12,6 +12,7 @@ import type { EmailSetResponse, Identity, EmailSubmissionSetResponse } from '../
 import type { SignatureContent } from '../../signature/index.js';
 import { buildDraftBody } from './draft-body.js';
 import { approverFor } from '../approval.js';
+import { describeOriginal, ORIGINAL_PROPERTIES, threadingHeaders, type Original } from './reply.js';
 
 /**
  * Common annotations for non-destructive write operations.
@@ -772,19 +773,35 @@ export function registerEmailOperationTools(
         htmlBody: z.string().optional().describe('HTML email body fragment (without signature, no <html>/<body> wrapper)'),
         signature: z.boolean().optional().describe('Append the configured signature (default true)'),
         inReplyTo: z.string().optional().describe('Message-ID of the email being replied to (with or without angle brackets)'),
+        replyToEmailId: z
+          .string()
+          .optional()
+          .describe('ID of the e-mail this draft answers: its Message-ID and references are filled in (use instead of inReplyTo)'),
       },
       annotations: EMAIL_CREATE_ANNOTATIONS,
     },
-    async ({ to, cc, bcc, subject, body, htmlBody, signature, inReplyTo }) => {
+    async ({ to, cc, bcc, subject, body, htmlBody, signature, inReplyTo, replyToEmailId }) => {
       logger.debug(
-        { to, cc, bcc, subject, hasBody: !!body, hasHtmlBody: !!htmlBody, signature, inReplyTo },
+        { to, cc, bcc, subject, hasBody: !!body, hasHtmlBody: !!htmlBody, signature, inReplyTo, replyToEmailId },
         'create_draft called'
       );
+
+      if (inReplyTo && replyToEmailId) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: 'text' as const,
+              text: 'Pass either inReplyTo or replyToEmailId, not both: replyToEmailId fills inReplyTo from the e-mail itself.',
+            },
+          ],
+        };
+      }
 
       try {
         const session = jmapClient.getSession();
 
-        // Get Drafts mailbox first (doesn't need submission capability)
+        // Get Drafts mailbox first (doesn't need submission capability), and the e-mail answered if any
         const mailboxResponse = await jmapClient.request([
           [
             'Mailbox/get',
@@ -794,7 +811,22 @@ export function registerEmailOperationTools(
             },
             'getMailboxes',
           ],
+          ...(replyToEmailId
+            ? [['Email/get', { accountId: session.accountId, ids: [replyToEmailId], properties: ORIGINAL_PROPERTIES }, 'getOriginal'] as [string, Record<string, unknown>, string]]
+            : []),
         ]);
+
+        let original: Original | undefined;
+        if (replyToEmailId) {
+          const originalResult = jmapClient.parseMethodResponse(mailboxResponse.methodResponses[1]);
+          original = originalResult.success ? ((originalResult.data as { list?: Original[] }).list ?? [])[0] : undefined;
+          if (!original) {
+            return {
+              isError: true,
+              content: [{ type: 'text' as const, text: `Original email not found: ${replyToEmailId}` }],
+            };
+          }
+        }
 
         // Parse Mailbox response
         const getResult = jmapClient.parseMethodResponse(mailboxResponse.methodResponses[0]);
@@ -874,14 +906,18 @@ export function registerEmailOperationTools(
         if (bcc && bcc.length > 0) {
           emailCreate.bcc = bcc.map((email) => ({ email }));
         }
-        if (inReplyTo) {
+        if (original) {
+          const headers = threadingHeaders(original);
+          if (headers.inReplyTo.length) emailCreate.inReplyTo = headers.inReplyTo;
+          if (headers.references.length) emailCreate.references = headers.references;
+        } else if (inReplyTo) {
           const msgId = inReplyTo.trim().replace(/^<|>$/g, '');
           emailCreate.inReplyTo = [msgId];
           emailCreate.references = [msgId];
         }
 
         // Create the draft
-        const refused = await approverFor(server).gate('create_draft', async () => ({ action: 'create_draft', details: [...approverFor(server).message(emailCreate), ['in_reply_to', inReplyTo]] }));
+        const refused = await approverFor(server).gate('create_draft', async () => ({ action: 'create_draft', details: [...approverFor(server).message(emailCreate), ['in_reply_to', original ? describeOriginal(original) : inReplyTo]] }));
         if (refused) return refused;
         const createResponse = await jmapClient.request([
           [

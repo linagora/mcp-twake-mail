@@ -33,6 +33,9 @@ const FULL_EMAIL_PROPERTIES = [
   'cc',
   'bcc',
   'replyTo',
+  'messageId',
+  'inReplyTo',
+  'references',
   'subject',
   'receivedAt',
   'sentAt',
@@ -78,7 +81,7 @@ export function registerEmailTools(
     'get_email',
     {
       title: 'Get Email',
-      description: 'Retrieve a single email by ID with full content including body text and attachments.',
+      description: 'Retrieve a single email by ID with full content including body text and attachments. Includes messageId, inReplyTo and references for threading.',
       inputSchema: {
         emailId: z.string().describe('The unique identifier of the email to retrieve'),
       },

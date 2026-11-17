@@ -62,6 +62,9 @@ interface JMAPEmail {
   htmlBody?: JMAPBodyPart[];
   bodyValues?: Record<string, JMAPBodyValue>;
   attachments?: JMAPAttachment[];
+  messageId?: string[] | null;
+  inReplyTo?: string[] | null;
+  references?: string[] | null;
 }
 
 /**
@@ -201,6 +204,15 @@ export function transformEmail(jmapEmail: JMAPEmail): SimplifiedEmail {
   }
   if (jmapEmail.replyTo) {
     result.replyTo = transformAddresses(jmapEmail.replyTo);
+  }
+  if (jmapEmail.messageId?.length) {
+    result.messageId = jmapEmail.messageId[0];
+  }
+  if (jmapEmail.inReplyTo?.length) {
+    result.inReplyTo = jmapEmail.inReplyTo;
+  }
+  if (jmapEmail.references?.length) {
+    result.references = jmapEmail.references;
   }
 
   // Extract body content if available

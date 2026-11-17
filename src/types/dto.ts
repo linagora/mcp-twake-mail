@@ -95,6 +95,11 @@ export interface SimplifiedEmail {
   bcc?: EmailAddress[];
   replyTo?: EmailAddress[];
 
+  // Threading (RFC 5322): pass messageId as inReplyTo to answer
+  messageId?: string;
+  inReplyTo?: string[];
+  references?: string[];
+
   // Body content (optional, only when specifically requested)
   textBody?: string;
   htmlBody?: string;

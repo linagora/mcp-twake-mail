@@ -15,6 +15,7 @@ import type {
 } from '../../types/jmap.js';
 import type { SignatureContent } from '../../signature/index.js';
 import { approverFor } from '../approval.js';
+import { describeOriginal, replySubject, threadingHeaders } from './reply.js';
 
 /**
  * Annotations for send operations (not idempotent - each call sends a new email).
@@ -569,20 +570,10 @@ export function registerEmailSendingTools(
         const original = originalList[0];
 
         // Step 2: Build threading headers (arrays per RFC 8621)
-        const inReplyTo: string[] = original.messageId || [];
-        const references: string[] = [
-          ...(original.references || []),
-          ...(original.messageId || []),
-        ];
+        const { inReplyTo, references } = threadingHeaders(original);
 
         // Step 3: Build subject with Re: prefix
-        let replySubject: string;
-        const originalSubject = original.subject || '';
-        if (originalSubject.toLowerCase().startsWith('re:')) {
-          replySubject = originalSubject;
-        } else {
-          replySubject = `Re: ${originalSubject}`;
-        }
+        const subject = replySubject(original.subject);
 
         // Step 4: Build recipients
         // Primary recipient: replyTo if available, otherwise from
@@ -653,7 +644,7 @@ export function registerEmailSendingTools(
           mailboxIds: { [draftsMailboxId]: true },
           from: [{ name: senderName, email: senderEmail }],
           to: toAddresses,
-          subject: replySubject,
+          subject,
           inReplyTo,
           references,
           bodyValues,
@@ -683,7 +674,7 @@ export function registerEmailSendingTools(
         }
 
         // Step 8: Create email and submit in single batch
-        const refused = await approverFor(server).gate('reply_email', async () => ({ action: 'reply_email', details: [['in_reply_to', [original.from?.[0] ? (original.from[0].name ? `${original.from[0].name} <${original.from[0].email}>` : original.from[0].email) : undefined, original.subject].filter(Boolean).join(' · ')], ...approverFor(server).message(emailCreate)] }));
+        const refused = await approverFor(server).gate('reply_email', async () => ({ action: 'reply_email', details: [['in_reply_to', describeOriginal(original)], ...approverFor(server).message(emailCreate)] }));
         if (refused) return refused;
         const sendResponse = await jmapClient.request(
           [

@@ -478,4 +478,75 @@ describe('Draft Management Tools', () => {
       expect(result.content[0].text).toContain('Failed to get mailboxes');
     });
   });
+
+  describe('create_draft', () => {
+    const ORIGINAL = { id: 'e1', messageId: ['m2@x'], references: ['m1@x'], subject: 'Budget', from: [{ email: 'bob@x' }] };
+
+    function mockCreate(original: Record<string, unknown> | null) {
+      vi.mocked(mockJmapClient.request)
+        .mockResolvedValueOnce({
+          methodResponses: [
+            ['Mailbox/get', { list: [{ id: 'mb-drafts', role: 'drafts' }] }, 'getMailboxes'],
+            ['Email/get', { list: original ? [original] : [] }, 'getOriginal'],
+          ],
+        })
+        .mockRejectedValueOnce(new Error('no submission capability'))
+        .mockResolvedValueOnce({ methodResponses: [['Email/set', { created: { draft: { id: 'd1', threadId: 't1' } } }, 'createDraft']] });
+      vi.mocked(mockJmapClient.parseMethodResponse).mockImplementation((r: any) =>
+        r[0] === 'error' ? { success: false, error: r[1] } : { success: true, data: r[1] }
+      );
+    }
+    const setCall = () => vi.mocked(mockJmapClient.request).mock.calls.map((c) => c[0][0]).find(([m]: any) => m === 'Email/set');
+
+    it('threads a draft under the e-mail given by replyToEmailId', async () => {
+      registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
+      mockCreate(ORIGINAL);
+
+      const result = await registeredTools.get('create_draft')!.handler({ to: ['bob@x'], subject: 'Re: Budget', body: 'OK', replyToEmailId: 'e1' });
+
+      expect(result.isError).toBeUndefined();
+      const getOriginal = vi.mocked(mockJmapClient.request).mock.calls[0][0][1];
+      expect(getOriginal[0]).toBe('Email/get');
+      expect(getOriginal[1].ids).toEqual(['e1']);
+      const created = setCall()![1].create.draft;
+      expect(created.inReplyTo).toEqual(['m2@x']);
+      expect(created.references).toEqual(['m1@x', 'm2@x']);
+    });
+
+    it('refuses inReplyTo and replyToEmailId together', async () => {
+      registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
+
+      const result = await registeredTools.get('create_draft')!.handler({ body: 'x', inReplyTo: 'm@x', replyToEmailId: 'e1' });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('either inReplyTo or replyToEmailId');
+      expect(mockJmapClient.request).not.toHaveBeenCalled();
+    });
+
+    it('says so when the e-mail to answer does not exist, and creates nothing', async () => {
+      registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
+      mockCreate(null);
+
+      const result = await registeredTools.get('create_draft')!.handler({ body: 'OK', replyToEmailId: 'e1' });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Original email not found: e1');
+      expect(setCall()).toBeUndefined();
+    });
+
+    it('still takes a Message-ID in inReplyTo', async () => {
+      registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
+      vi.mocked(mockJmapClient.request)
+        .mockResolvedValueOnce({ methodResponses: [['Mailbox/get', { list: [{ id: 'mb-drafts', role: 'drafts' }] }, 'getMailboxes']] })
+        .mockRejectedValueOnce(new Error('no submission capability'))
+        .mockResolvedValueOnce({ methodResponses: [['Email/set', { created: { draft: { id: 'd1', threadId: 't1' } } }, 'createDraft']] });
+      vi.mocked(mockJmapClient.parseMethodResponse).mockImplementation((r: any) => ({ success: true, data: r[1] }));
+
+      const result = await registeredTools.get('create_draft')!.handler({ body: 'OK', inReplyTo: '<m2@x>' });
+
+      expect(result.isError).toBeUndefined();
+      expect(vi.mocked(mockJmapClient.request).mock.calls[0][0]).toHaveLength(1);
+      expect(setCall()![1].create.draft.inReplyTo).toEqual(['m2@x']);
+    });
+  });
 });
