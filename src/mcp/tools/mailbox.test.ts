@@ -152,6 +152,28 @@ describe('registerMailboxTools', () => {
   });
 
   describe('list_mailboxes', () => {
+    describe('subscription filter', () => {
+      const boxes = [
+        { id: 'a', name: 'Shown', role: null, totalEmails: 1, unreadEmails: 0, sortOrder: 1, parentId: null, isSubscribed: true },
+        { id: 'b', name: 'Ventes', role: null, totalEmails: 1, unreadEmails: 0, sortOrder: 2, parentId: null, isSubscribed: false },
+        { id: 'c', name: 'Unknown', role: null, totalEmails: 1, unreadEmails: 0, sortOrder: 3, parentId: null },
+      ];
+      const list = async (role: string) => {
+        vi.mocked(mockJmapClient.request).mockResolvedValue({ methodResponses: [['Mailbox/get', { list: boxes }, 'list-mailboxes']] });
+        vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({ success: true, data: { list: boxes } });
+        const result = await registeredTools.get('list_mailboxes')!({ role });
+        return JSON.parse(result.content[0].text).map((m: { id: string }) => m.id);
+      };
+
+      it('role=subscribed lists the folders mail apps show (no flag counts as subscribed)', async () => {
+        expect(await list('subscribed')).toEqual(['a', 'c']);
+      });
+
+      it('role=unsubscribed lists the folders mail apps hide', async () => {
+        expect(await list('unsubscribed')).toEqual(['b']);
+      });
+    });
+
     it('returns all mailboxes when no filter', async () => {
       const mockMailboxes = [
         { id: 'inbox', name: 'Inbox', role: 'inbox', totalEmails: 100, unreadEmails: 10, sortOrder: 1, parentId: null },
@@ -282,7 +304,8 @@ describe('registerMailboxTools', () => {
       expect(registeredTools.has('create_mailbox')).toBe(true);
       expect(registeredTools.has('rename_mailbox')).toBe(true);
       expect(registeredTools.has('delete_mailbox')).toBe(true);
-      expect(registeredTools.size).toBe(5);
+      expect(registeredTools.has('set_mailbox_subscription')).toBe(true);
+      expect(registeredTools.size).toBe(6);
     });
   });
 });

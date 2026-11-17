@@ -1014,4 +1014,59 @@ describe('Mailbox Management Tools', () => {
       expect(result.content[0].text).toContain('Internal error');
     });
   });
+
+  describe('set_mailbox_subscription', () => {
+    const answer = (data: Record<string, unknown>) => {
+      vi.mocked(mockJmapClient.request).mockResolvedValue({ methodResponses: [['Mailbox/set', data, 'subscribe']] });
+      vi.mocked(mockJmapClient.parseMethodResponse).mockImplementation((r: any) => ({ success: true, data: r[1] }));
+    };
+    const tool = () => {
+      registerMailboxTools(mockServer, mockJmapClient, mockLogger);
+      return registeredTools.get('set_mailbox_subscription')!;
+    };
+
+    it('is an idempotent write that never destroys', () => {
+      expect(tool().config.annotations).toEqual({ readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true });
+    });
+
+    it('subscribes the given folders', async () => {
+      answer({ updated: { m1: null, m2: null } });
+
+      const result = await tool().handler({ mailboxIds: ['m1', 'm2'], subscribed: true });
+
+      expect(result.isError).toBeUndefined();
+      expect(JSON.parse(result.content[0].text)).toEqual({ success: true, subscribed: true, updated: ['m1', 'm2'] });
+      const [method, params] = vi.mocked(mockJmapClient.request).mock.calls[0][0][0];
+      expect(method).toBe('Mailbox/set');
+      expect(params.update).toEqual({ m1: { isSubscribed: true }, m2: { isSubscribed: true } });
+    });
+
+    it('unsubscribes too', async () => {
+      answer({ updated: { m1: null } });
+
+      await tool().handler({ mailboxIds: ['m1'], subscribed: false });
+
+      expect(vi.mocked(mockJmapClient.request).mock.calls[0][0][0][1].update).toEqual({ m1: { isSubscribed: false } });
+    });
+
+    it('names the folders the server did not change and does not claim success', async () => {
+      answer({ updated: { m1: null }, notUpdated: { m2: { type: 'notFound', description: 'no such mailbox' } } });
+
+      const result = await tool().handler({ mailboxIds: ['m1', 'm2'], subscribed: true });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('m2 (notFound: no such mailbox)');
+      expect(result.content[0].text).toContain('Changed: m1');
+    });
+
+    it('reports a JMAP error', async () => {
+      vi.mocked(mockJmapClient.request).mockResolvedValue({ methodResponses: [['error', { type: 'forbidden' }, 'subscribe']] });
+      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({ success: false, error: { type: 'forbidden' } } as any);
+
+      const result = await tool().handler({ mailboxIds: ['m1'], subscribed: true });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('forbidden');
+    });
+  });
 });

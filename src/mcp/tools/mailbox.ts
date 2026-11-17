@@ -149,9 +149,11 @@ export function registerMailboxTools(
     'List all mailboxes with optional filtering by role (inbox, drafts, sent, trash, archive, spam, junk, important, all).',
     {
       role: z
-        .enum(['inbox', 'drafts', 'sent', 'trash', 'archive', 'junk', 'important', 'all', 'subscribed'])
+        .enum(['inbox', 'drafts', 'sent', 'trash', 'archive', 'junk', 'important', 'all', 'subscribed', 'unsubscribed'])
         .optional()
-        .describe('Filter mailboxes by role (e.g., inbox, drafts, sent, trash)'),
+        .describe(
+          'Filter by role (inbox, drafts, sent, trash, archive, junk, important, all), or by IMAP subscription: subscribed, unsubscribed (unsubscribed folders are hidden by IMAP clients such as Thunderbird)'
+        ),
     },
     {
       ...MAILBOX_TOOL_ANNOTATIONS,
@@ -207,7 +209,11 @@ export function registerMailboxTools(
         );
 
         // Filter by role if specified (client-side filtering)
-        if (role) {
+        if (role === 'subscribed') {
+          mailboxes = mailboxes.filter((mailbox) => mailbox.isSubscribed !== false);
+        } else if (role === 'unsubscribed') {
+          mailboxes = mailboxes.filter((mailbox) => mailbox.isSubscribed === false);
+        } else if (role) {
           mailboxes = mailboxes.filter((mailbox) => mailbox.role === role);
         }
 
@@ -768,7 +774,70 @@ export function registerMailboxTools(
     }
   );
 
+  // set_mailbox_subscription tool: IMAP clients hide unsubscribed folders
+  server.tool(
+    'set_mailbox_subscription',
+    'Subscribe or unsubscribe existing folders (IMAP subscription): mail apps such as Thunderbird hide unsubscribed folders. ' +
+      'Nothing is moved or deleted. Find hidden folders with list_mailboxes role=unsubscribed.',
+    {
+      mailboxIds: z.array(z.string().min(1)).min(1).max(50).describe('IDs of the folders to change (1 to 50)'),
+      subscribed: z.boolean().describe('true to show the folders in mail apps, false to hide them'),
+    },
+    {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+      title: 'Set Mailbox Subscription',
+    },
+    async ({ mailboxIds, subscribed }) => {
+      logger.debug({ mailboxIds, subscribed }, 'set_mailbox_subscription called');
+      const action = subscribed ? 'subscribe_mailbox' : 'unsubscribe_mailbox';
+      const refused = await approverFor(server).gate(action, async () => ({
+        action,
+        details: [['mailbox', (await Promise.all(mailboxIds.map((id) => approverFor(server).mailbox(jmapClient, id)))).join('\n')]],
+      }));
+      if (refused) return refused;
+
+      try {
+        const session = jmapClient.getSession();
+        const response = await jmapClient.request([
+          [
+            'Mailbox/set',
+            { accountId: session.accountId, update: Object.fromEntries(mailboxIds.map((id) => [id, { isSubscribed: subscribed }])) },
+            'subscribe',
+          ],
+        ]);
+        const result = jmapClient.parseMethodResponse(response.methodResponses[0]);
+        if (!result.success) {
+          return {
+            content: [{ type: 'text' as const, text: `Error changing the subscription: ${result.error?.description || result.error?.type || 'Unknown error'}` }],
+            isError: true,
+          };
+        }
+        const data = result.data as { updated?: Record<string, unknown> | null; notUpdated?: Record<string, { type: string; description?: string }> | null };
+        const updated = Object.keys(data.updated ?? {});
+        const failed = Object.entries(data.notUpdated ?? {});
+        if (failed.length) {
+          const why = failed.map(([id, e]) => `${id} (${e.type}${e.description ? `: ${e.description}` : ''})`).join(', ');
+          return {
+            content: [{ type: 'text' as const, text: `Not changed: ${why}. Changed: ${updated.join(', ') || 'none'}.` }],
+            isError: true,
+          };
+        }
+        logger.debug({ updated, subscribed }, 'set_mailbox_subscription success');
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, subscribed, updated }) }] };
+      } catch (error) {
+        logger.error({ error, mailboxIds }, 'Exception in set_mailbox_subscription');
+        return {
+          content: [{ type: 'text' as const, text: `Error changing the subscription: ${error instanceof Error ? error.message : String(error)}` }],
+          isError: true,
+        };
+      }
+    }
+  );
+
   logger.info(
-    'Mailbox tools registered: get_mailbox, list_mailboxes, create_mailbox, rename_mailbox, delete_mailbox'
+    'Mailbox tools registered: get_mailbox, list_mailboxes, create_mailbox, rename_mailbox, delete_mailbox, set_mailbox_subscription'
   );
 }

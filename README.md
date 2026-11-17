@@ -11,7 +11,7 @@
 
 ## What is it?
 
-`mcp-twake-mail` is a [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server. MCP is the open standard that lets AI assistants (Claude Desktop, Claude Code, Hermes Agent, Cursor, VS Code and many others) use external tools. This server exposes your mailbox to the assistant as **31 tools**: read, search, write drafts, reply, organise, handle attachments.
+`mcp-twake-mail` is a [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server. MCP is the open standard that lets AI assistants (Claude Desktop, Claude Code, Hermes Agent, Cursor, VS Code and many others) use external tools. This server exposes your mailbox to the assistant as **32 tools**: read, search, write drafts, reply, organise, handle attachments.
 
 It speaks **JMAP** ([RFC 8620](https://www.rfc-editor.org/rfc/rfc8620) / [RFC 8621](https://www.rfc-editor.org/rfc/rfc8621)), the modern email standard used by Twake Mail and Apache James, so it also works with any JMAP server (Stalwart, Cyrus IMAP, Fastmail…).
 
@@ -43,7 +43,7 @@ Used together, they let one assistant prepare a meeting from the invitation, the
 
 ## Features
 
-### 31 MCP tools
+### 32 MCP tools
 
 | Category | Tools |
 |---|---|
@@ -52,7 +52,7 @@ Used together, they let one assistant prepare a meeting from the invitation, the
 | Send ⚠️ | `send_email`, `reply_email`, `forward_email`, `send_draft` |
 | Organise | `mark_as_read`, `mark_as_unread`, `move_email`, `add_label`, `remove_label` |
 | Batch (up to 50 emails) | `batch_mark_read`, `batch_mark_unread`, `batch_move`, `batch_add_label`, `batch_remove_label`, `batch_delete` ⚠️ |
-| Mailboxes | `list_mailboxes`, `get_mailbox`, `create_mailbox`, `rename_mailbox`, `delete_mailbox` ⚠️ |
+| Mailboxes | `list_mailboxes`, `get_mailbox`, `create_mailbox`, `rename_mailbox`, `set_mailbox_subscription`, `delete_mailbox` ⚠️ |
 | Delete ⚠️ | `delete_email` |
 | Attachments | `get_attachments`, `download_attachment` |
 
@@ -68,6 +68,7 @@ Used together, they let one assistant prepare a meeting from the invitation, the
 - **Reply drafts**: `reply_draft` prepares an answer without sending it: `Re:` subject, threading headers, recipients of the original (reply-all optional), your signature, then the quoted original ("On …, X wrote:", in French with `USER_LANGUAGE=fr`).
 - **Attachments on drafts**: `create_draft`, `reply_draft` and `update_draft` attach files taken from the upload folder only (`JMAP_UPLOAD_DIR`); a path outside it, also through a symbolic link, is refused, and the approval prompt lists each file with its size.
 - **Signatures**: a Markdown signature file is converted to HTML and plain text and appended to drafts and sent emails.
+- **Hidden folders**: a folder you cannot see in Thunderbird may just be unsubscribed: `list_mailboxes role=unsubscribed` finds it, `set_mailbox_subscription` shows it again.
 - **System folder protection**: Inbox, Sent, Drafts and Trash cannot be renamed or deleted.
 - **Large attachments** (> 750 KB) are saved to disk instead of being returned inline, in `~/Downloads` or `JMAP_DOWNLOAD_DIR`. `save: true` keeps any attachment on disk, to upload it to Twake Drive for instance.
 - HTTPS only; logs on stderr, never on the MCP channel.

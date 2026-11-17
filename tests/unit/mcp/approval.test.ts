@@ -121,6 +121,7 @@ const WRITES: [string, Record<string, unknown>][] = [
   ['create_mailbox', { name: 'Archives 2026', parentId: 'mb-proj' }],
   ['rename_mailbox', { mailboxId: 'mb-proj', newName: 'Projets 2027' }],
   ['delete_mailbox', { mailboxId: 'mb-proj' }],
+  ['set_mailbox_subscription', { mailboxIds: ['mb-proj'], subscribed: true }],
 ];
 
 describe('prior approval of writes', () => {
@@ -259,6 +260,15 @@ describe('prior approval of writes', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it('names the folders it shows or hides in mail apps', async () => {
+    const t = await connect('accept');
+    await t.call('set_mailbox_subscription', { mailboxIds: ['mb-proj'], subscribed: true });
+    expect(t.prompts[0]).toContain('Twake Mail : Afficher des dossiers dans les logiciels de messagerie (abonnement)');
+    expect(t.prompts[0]).toContain('Dossier : Inbox / Projets');
+    await t.call('set_mailbox_subscription', { mailboxIds: ['mb-proj'], subscribed: false });
+    expect(t.prompts[1]).toContain('Masquer des dossiers dans les logiciels de messagerie (désabonnement)');
   });
 
   it('refuses to act when the client cannot ask, unless it confirms itself', async () => {
