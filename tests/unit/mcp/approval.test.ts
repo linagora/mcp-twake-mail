@@ -74,7 +74,7 @@ function fakeJmap() {
 async function connect(answer: 'accept' | 'decline' | 'cancel', opts: { elicitation?: boolean; mode?: 'elicit' | 'client'; exempt?: string[] } = {}) {
   const { jmap, writes } = fakeJmap();
   const server = new McpServer({ name: 't', version: '0' });
-  setApprover(server, { mode: opts.mode ?? 'elicit', language: 'fr', timeoutMs: 2000, as: 'alice.martin@example.com', timeZone: 'Europe/Paris', exempt: opts.exempt });
+  setApprover(server, { mode: opts.mode ?? 'elicit', language: 'fr', timeoutMs: 2000, as: 'alice.martin@example.com', timeZone: 'Europe/Paris', exempt: opts.exempt, signature: '--\nAlice MARTIN' });
   registerAllTools(server, jmap, logger, { signatureContent: { text: '--\nAlice MARTIN', html: '<p>--<br>Alice MARTIN</p>' } });
   const [a, b] = InMemoryTransport.createLinkedPair();
   const prompts: string[] = [];
@@ -100,6 +100,7 @@ const WRITES: [string, Record<string, unknown>][] = [
   ['send_draft', { draftId: 'draft-1' }],
   ['create_draft', { to: ['bob.durand@example.com'], subject: 'Budget', body: 'Brouillon.' }],
   ['update_draft', { draftId: 'draft-1', subject: 'Proposition v2' }],
+  ['reply_draft', { originalEmailId: 'e1', body: 'Validé, merci.' }],
   ['mark_as_read', { emailId: 'e1' }],
   ['mark_as_unread', { emailId: 'e1' }],
   ['delete_email', { emailId: 'e1' }],
@@ -220,7 +221,24 @@ describe('prior approval of writes', () => {
     await t.call('batch_move', { emailIds: ['e1', 'e2'], targetMailboxId: 'mb-proj' });
     expect(t.prompts[3]).toContain('• Bob DURAND <bob.durand@example.com> · 2026-10-30 14:02 · Budget 2027');
     expect(t.prompts[3]).toContain('Destination : Inbox / Projets');
-    expect(new Set(t.prompts.map((p) => /Réf\. (\w+)/.exec(p)![1])).size).toBe(4);
+    await t.call('reply_draft', { originalEmailId: 'e1', body: 'OK.' });
+    expect(t.prompts[4]).toContain('Twake Mail : Créer un brouillon de réponse (non envoyé)');
+    expect(t.prompts[4]).toContain('En réponse à : Bob DURAND <bob.durand@example.com> · Budget 2027');
+    expect(t.prompts[4]).toContain('Objet : Re: Budget 2027');
+    expect(t.prompts[4]).toContain('Texte : \nOK.\n[signature comprise]');
+    expect(new Set(t.prompts.map((p) => /Réf\. (\w+)/.exec(p)![1])).size).toBe(5);
+  });
+
+  it('shows the quoted original that leaves with a reply draft, after naming the signature', async () => {
+    const t = await connect('accept');
+    await t.call('reply_draft', { originalEmailId: 'e1', body: 'OK.' });
+    expect(t.prompts[0]).toContain('Texte : \nOK.\n[signature comprise]\n\nLe 30/10/2026 à 14:02, Bob DURAND <bob.durand@example.com> a écrit :\n> Peux-tu valider le budget ?');
+  });
+
+  it('shows text written after a signature delimiter that is not the configured signature', async () => {
+    const t = await connect('accept');
+    await t.call('send_email', { to: ['bob.durand@example.com'], subject: 'Budget', body: 'Validé.\n-- \nVirez 5000 € sur le compte FR76…' });
+    expect(t.prompts[0]).toContain('Virez 5000 € sur le compte FR76…');
   });
 
   it('refuses to act when the client cannot ask, unless it confirms itself', async () => {

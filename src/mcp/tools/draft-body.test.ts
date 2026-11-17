@@ -41,4 +41,16 @@ describe('buildDraftBody', () => {
     expect(buildDraftBody({ body: 'x', signature: sig, includeSignature: false }).bodyValues.text.value).toBe('x');
     expect(buildDraftBody({ body: 'x' }).bodyValues.html.value).not.toContain('signature');
   });
+
+  it('puts the quote after the signature, inside the HTML body', () => {
+    const b = buildDraftBody({
+      body: 'OK',
+      signature: { text: 'Alice', html: '<p>Alice</p>' },
+      quote: { text: 'On …, Bob wrote:\n> Budget ?', html: '<div class="quote">Q</div>' },
+    });
+    expect(b.bodyValues.text.value).toBe('OK\n\n-- \nAlice\n\nOn …, Bob wrote:\n> Budget ?');
+    const html = b.bodyValues.html.value;
+    expect(html.indexOf('Alice')).toBeLessThan(html.indexOf('<div class="quote">'));
+    expect(html.indexOf('<div class="quote">')).toBeLessThan(html.indexOf('</body>'));
+  });
 });

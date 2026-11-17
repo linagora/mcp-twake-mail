@@ -11,7 +11,7 @@
 
 ## What is it?
 
-`mcp-twake-mail` is a [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server. MCP is the open standard that lets AI assistants (Claude Desktop, Claude Code, Hermes Agent, Cursor, VS Code and many others) use external tools. This server exposes your mailbox to the assistant as **30 tools**: read, search, write drafts, reply, organise, handle attachments.
+`mcp-twake-mail` is a [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server. MCP is the open standard that lets AI assistants (Claude Desktop, Claude Code, Hermes Agent, Cursor, VS Code and many others) use external tools. This server exposes your mailbox to the assistant as **31 tools**: read, search, write drafts, reply, organise, handle attachments.
 
 It speaks **JMAP** ([RFC 8620](https://www.rfc-editor.org/rfc/rfc8620) / [RFC 8621](https://www.rfc-editor.org/rfc/rfc8621)), the modern email standard used by Twake Mail and Apache James, so it also works with any JMAP server (Stalwart, Cyrus IMAP, Fastmail…).
 
@@ -43,12 +43,12 @@ Used together, they let one assistant prepare a meeting from the invitation, the
 
 ## Features
 
-### 30 MCP tools
+### 31 MCP tools
 
 | Category | Tools |
 |---|---|
 | Read | `get_email`, `get_email_labels`, `search_emails`, `get_thread`, `get_thread_emails` |
-| Drafts | `create_draft`, `update_draft` |
+| Drafts | `create_draft`, `reply_draft`, `update_draft` |
 | Send ⚠️ | `send_email`, `reply_email`, `forward_email`, `send_draft` |
 | Organise | `mark_as_read`, `mark_as_unread`, `move_email`, `add_label`, `remove_label` |
 | Batch (up to 50 emails) | `batch_mark_read`, `batch_mark_unread`, `batch_move`, `batch_add_label`, `batch_remove_label`, `batch_delete` ⚠️ |
@@ -65,6 +65,7 @@ Used together, they let one assistant prepare a meeting from the invitation, the
 - **Four authentication methods**: Basic, Bearer token, OIDC with PKCE (enterprise SSO, automatic token refresh) and **token command** (short-lived tokens from an external broker).
 - **Auto-discovery**: configure with just your email address (DNS SRV, `.well-known/jmap`, OAuth metadata).
 - **Rich drafts**: `create_draft` builds a `multipart/alternative` message (plain text + HTML) from `body` (plain text, HTML generated) or `htmlBody` (rich formatting), and threads replies with `replyToEmailId` (the e-mail answered) or `inReplyTo` (its Message-ID, which `get_email` returns as `messageId`), filling the `In-Reply-To` and `References` headers.
+- **Reply drafts**: `reply_draft` prepares an answer without sending it: `Re:` subject, threading headers, recipients of the original (reply-all optional), your signature, then the quoted original ("On …, X wrote:", in French with `USER_LANGUAGE=fr`).
 - **Signatures**: a Markdown signature file is converted to HTML and plain text and appended to drafts and sent emails.
 - **System folder protection**: Inbox, Sent, Drafts and Trash cannot be renamed or deleted.
 - **Large attachments** (> 750 KB) are saved to disk instead of being returned inline, in `~/Downloads` or `JMAP_DOWNLOAD_DIR`. `save: true` keeps any attachment on disk, to upload it to Twake Drive for instance.

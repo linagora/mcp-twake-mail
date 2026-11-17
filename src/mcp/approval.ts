@@ -20,6 +20,7 @@ const ACTIONS = {
   send_draft: { en: 'Send a draft', fr: 'Envoyer un brouillon' },
   create_draft: { en: 'Create a draft (not sent)', fr: 'Créer un brouillon (non envoyé)' },
   update_draft: { en: 'Change a draft (not sent)', fr: 'Modifier un brouillon (non envoyé)' },
+  reply_draft: { en: 'Create a reply draft (not sent)', fr: 'Créer un brouillon de réponse (non envoyé)' },
   mark_as_read: { en: 'Mark as read', fr: 'Marquer comme lu' },
   mark_as_unread: { en: 'Mark as unread', fr: 'Marquer comme non lu' },
   delete_email: { en: 'Move to the trash', fr: 'Mettre à la corbeille' },
@@ -72,6 +73,8 @@ export interface ApprovalOptions {
   timeZone?: string;
   /** Tools the user chose to run without a prompt (JMAP_APPROVAL_EXEMPT). */
   exempt?: string[];
+  /** The configured signature (plain text): the prompt names it instead of repeating it. */
+  signature?: string;
 }
 
 type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean };
@@ -144,8 +147,13 @@ export class Approver {
     else if (htmlPart && bodies[htmlPart]) text = htmlToText(bodies[htmlPart].value);
     else if (values.length) text = values[0].value;
     // The configured signature ("-- " delimiter, RFC 3676) is long and always the same: name it, do not repeat it.
-    const cut = text?.search(/\n-- ?\n/) ?? -1;
-    if (text && cut >= 0) text = `${text.slice(0, cut).trimEnd()}\n[${this.label('signature')}]`;
+    // Only that exact signature is named: any other text after a delimiter, a quoted original included, is shown.
+    const signature = this.opts.signature?.replace(/\r\n/g, '\n').trim();
+    if (text) text = text.replace(/\r\n/g, '\n');
+    const at = text && signature ? text.indexOf(`\n-- \n${signature}`) : -1;
+    if (text && signature && at >= 0) {
+      text = `${text.slice(0, at).trimEnd()}\n[${this.label('signature')}]${text.slice(at + `\n-- \n${signature}`.length)}`;
+    }
     const files = (e.attachments as { name?: string; size?: number }[] | undefined)?.map((a) => a.name ?? 'file');
     return [
       ['from', addrs(e.from)],

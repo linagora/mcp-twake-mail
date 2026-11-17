@@ -75,6 +75,7 @@ export async function startServer(): Promise<void> {
       as: config.JMAP_DEFAULT_FROM ?? (session as { username?: string }).username,
       timeZone: config.USER_TIMEZONE,
       exempt: (config.JMAP_APPROVAL_EXEMPT ?? '').split(',').map((t) => t.trim()).filter(Boolean),
+      signature: signatureContent?.text,
     });
     registerAllTools(
       server,

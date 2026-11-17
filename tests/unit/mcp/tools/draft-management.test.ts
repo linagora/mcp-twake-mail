@@ -137,6 +137,38 @@ describe('Draft Management Tools', () => {
       expect(created.attachments).toEqual([{ blobId: 'blob-a', type: 'application/pdf', name: 'devis.pdf', disposition: 'attachment' }]);
     });
 
+    it('keeps the quote of a reply draft when its body changes', async () => {
+      registerEmailOperationTools(mockServer, mockJmapClient, mockLogger, { text: 'Alice', html: '<p>Alice</p>' });
+      const tool = registeredTools.get('update_draft')!;
+      const quoteHtml = '<div class="quote"><p>Bob a écrit :</p><blockquote type="cite"><p>Budget ?</p></blockquote></div>';
+      mockDraftThen({ created: { draft: { id: 'draft-2' } }, destroyed: ['draft-1'] }, {
+        ...DRAFT,
+        textBody: [{ partId: 'text', type: 'text/plain' }],
+        htmlBody: [{ partId: 'html', type: 'text/html' }],
+        bodyValues: {
+          text: { value: 'Old\n\n-- \nAlice\n\nLe 30/10/2026 à 14:02, Bob a écrit :\n> Budget ?\n>> plus ancien' },
+          html: { value: `<!DOCTYPE html><html><body>\n<p>Old</p>\n<br>\n<div class="signature">-- <br>\n<p>Alice</p></div>\n<br>\n${quoteHtml}\n</body></html>` },
+        },
+      });
+
+      await tool.handler({ draftId: 'draft-1', body: 'New' });
+
+      const created = setCall()[1].create.draft;
+      expect(created.bodyValues.text.value).toBe('New\n\n-- \nAlice\n\nLe 30/10/2026 à 14:02, Bob a écrit :\n> Budget ?\n>> plus ancien');
+      expect(created.bodyValues.html.value).toContain('<p>New</p>');
+      expect(created.bodyValues.html.value).toContain(quoteHtml);
+    });
+
+    it('does not bring back a signature the draft was made without', async () => {
+      registerEmailOperationTools(mockServer, mockJmapClient, mockLogger, { text: 'Alice', html: '<p>Alice</p>' });
+      const tool = registeredTools.get('update_draft')!;
+      mockDraftThen({ created: { draft: { id: 'draft-2' } }, destroyed: ['draft-1'] });
+
+      await tool.handler({ draftId: 'draft-1', body: 'New' });
+
+      expect(setCall()[1].create.draft.bodyValues.text.value).toBe('New');
+    });
+
     it('updates draft recipients and keeps the body as it was', async () => {
       registerEmailOperationTools(mockServer, mockJmapClient, mockLogger);
       const tool = registeredTools.get('update_draft')!;
