@@ -64,7 +64,7 @@ Used together, they let one assistant prepare a meeting from the invitation, the
 
 - **Four authentication methods**: Basic, Bearer token, OIDC with PKCE (enterprise SSO, automatic token refresh) and **token command** (short-lived tokens from an external broker).
 - **Auto-discovery**: configure with just your email address (DNS SRV, `.well-known/jmap`, OAuth metadata).
-- **Rich drafts**: `create_draft` builds a `multipart/alternative` message (plain text + HTML) from `body` (plain text, HTML generated) or `htmlBody` (rich formatting), and threads replies with `inReplyTo` (`In-Reply-To` and `References` headers).
+- **Rich drafts**: `create_draft` builds a `multipart/alternative` message (plain text + HTML) from `body` (plain text, HTML generated) or `htmlBody` (rich formatting), and threads replies with `replyToEmailId` (the e-mail answered) or `inReplyTo` (its Message-ID, which `get_email` returns as `messageId`), filling the `In-Reply-To` and `References` headers.
 - **Signatures**: a Markdown signature file is converted to HTML and plain text and appended to drafts and sent emails.
 - **System folder protection**: Inbox, Sent, Drafts and Trash cannot be renamed or deleted.
 - **Large attachments** (> 750 KB) are saved to disk instead of being returned inline, in `~/Downloads` or `JMAP_DOWNLOAD_DIR`. `save: true` keeps any attachment on disk, to upload it to Twake Drive for instance.

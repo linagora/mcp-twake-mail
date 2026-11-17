@@ -500,4 +500,31 @@ describe('transformEmail', () => {
       });
     });
   });
+
+  describe('threading', () => {
+    const base = {
+      id: 'e9',
+      blobId: 'blob9',
+      threadId: 'thread9',
+      mailboxIds: { inbox: true },
+      receivedAt: '2026-01-29T10:00:00Z',
+      subject: 'Budget',
+      from: [{ name: 'Sender', email: 'sender@example.com' }],
+      to: [{ name: 'Recipient', email: 'recipient@example.com' }],
+    };
+
+    it('exposes the Message-ID and the threading headers', () => {
+      const out = transformEmail({ ...base, messageId: ['m2@x'], inReplyTo: ['m1@x'], references: ['m0@x', 'm1@x'] });
+      expect(out.messageId).toBe('m2@x');
+      expect(out.inReplyTo).toEqual(['m1@x']);
+      expect(out.references).toEqual(['m0@x', 'm1@x']);
+    });
+
+    it('leaves threading fields out when the server gives none', () => {
+      const out = transformEmail({ ...base, messageId: null, references: [] });
+      expect(out).not.toHaveProperty('messageId');
+      expect(out).not.toHaveProperty('inReplyTo');
+      expect(out).not.toHaveProperty('references');
+    });
+  });
 });
