@@ -4,6 +4,8 @@ All notable changes to mcp-twake-mail are documented here. The format follows [K
 
 ## [Unreleased]
 
+## [4.4.0] - 2026-11-20
+
 ### Added
 - `approve_batch` lets an agent have a series of writes approved at once: one approval for the exact list, then each matching call (with `batchId`) runs without a question, once, within 15 minutes; anything else, or anything changed since, asks as usual. Not to be confused with the `batch_*` tools.
 - `mcp-twake-mail call <tool>` and `mcp-twake-mail tools` call the server's tools from a terminal or a script, with `--arg key=value` or `--json`, the result on stdout and an exit code per outcome. A write typed in a terminal is approved without a question (`--i` asks first); started by an agent it is refused; without a terminal it needs `--yes --as <name>` for a name allowed with `mcp-twake-mail allow-unattended <name>`.
