@@ -73,5 +73,8 @@
     "typescript-eslint": "^8.72.1",
     "vitest": "^5.0.5",
     "vitest-fetch-mock": "^0.4.0"
+  },
+  "twake": {
+    "commandLine": 1
   }
 }

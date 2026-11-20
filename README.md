@@ -257,6 +257,22 @@ Hermes shows the approval prompts in the desktop app, the terminal or on your me
 
 Any client that can launch a stdio MCP server works: command `npx`, arguments `-y mcp-twake-mail`, and the environment variables above.
 
+## From the command line
+
+Every tool of this server can be called from a terminal or a script, with the same configuration (`JMAP_*` variables) as the server:
+
+```sh
+npx mcp-twake-mail tools                      # one line per tool
+npx mcp-twake-mail call search_emails --arg participant=bob@example.com --arg limit=5
+npx mcp-twake-mail call create_draft --json @draft.json
+```
+
+- `--arg key=value` is converted to the type the tool gives `key`; `--json` takes the whole arguments object (`@file`, or `-` for stdin). The result goes to stdout (`--json-output` for the raw result), everything else to stderr.
+- Exit codes: 0 done, 1 the tool answered with an error, 2 wrong command or argument, 3 a write was not approved, 4 the server could not be reached.
+- **Writes:** typed by you in a terminal, a write is approved without a question (`--i` asks first). Started by an agent (`CLAUDECODE` or `HERMES_HOME` set), a write is refused: agents write through their MCP tools, which ask you. Without a terminal (cron), a write is refused unless it passes `--yes --as <name>` for a name you allowed once, in a terminal, with `npx mcp-twake-mail allow-unattended <name>`. The allowed names are shared by the six Twake.ai servers, in `~/.config/twake-ai/cli.json` (`%USERPROFILE%\AppData\Roaming\twake-ai\cli.json` on Windows).
+- These rules stop an agent that follows instructions; they cannot stop a program that hides that it is an agent, or rewrites `cli.json`, under your account.
+- With [mcp-twake-ai](https://github.com/linagora/mcp-twake-ai), `npx mcp-twake-ai call mail …` does the same with your Twake.ai sign-in.
+
 ## Recommended safe configuration
 
 Keep `JMAP_APPROVAL=elicit` (the default): every e-mail sent in your name, and every other write, waits for your OK on the exact content. If you prefer that the assistant never sends at all (**drafts only**: you send from Twake Mail), filter out the sending and deleting tools in your MCP client, for example with Hermes Agent:
