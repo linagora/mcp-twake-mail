@@ -50,6 +50,11 @@ export function registerAllTools(
     confirm: (message) => approverFor(server).confirmText(message),
     clientMode: () => approverFor(server).opts.mode === 'client',
     language: () => approverFor(server).opts.language,
+    // the account, time zone, exemptions and signature the approval texts are written for
+    settings: () => {
+      const a = approverFor(server).opts;
+      return JSON.stringify([a.as ?? '', a.timeZone ?? '', a.exempt ?? [], a.signature ?? '']);
+    },
   });
 
   // Register email tools (get_email, search_emails, get_email_labels)
