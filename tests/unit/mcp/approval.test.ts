@@ -128,7 +128,8 @@ describe('prior approval of writes', () => {
   it('covers every tool that sends or changes something', async () => {
     const { client } = await connect('accept');
     const tools = (await client.listTools()).tools;
-    const writers = tools.filter((t) => t.annotations?.readOnlyHint !== true).map((t) => t.name);
+    // approve_batch writes nothing itself: it asks the user for a list of the others
+    const writers = tools.filter((t) => t.annotations?.readOnlyHint !== true && t.name !== 'approve_batch').map((t) => t.name);
     expect([...new Set([...WRITES.map(([n]) => n), 'download_attachment'])].sort()).toEqual(writers.sort());
   });
 
