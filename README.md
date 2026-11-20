@@ -11,7 +11,7 @@
 
 ## What is it?
 
-`mcp-twake-mail` is a [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server. MCP is the open standard that lets AI assistants (Claude Desktop, Claude Code, Hermes Agent, Cursor, VS Code and many others) use external tools. This server exposes your mailbox to the assistant as **32 tools**: read, search, write drafts, reply, organise, handle attachments.
+`mcp-twake-mail` is a [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server. MCP is the open standard that lets AI assistants (Claude Desktop, Claude Code, Hermes Agent, Cursor, VS Code and many others) use external tools. This server exposes your mailbox to the assistant as **33 tools**: read, search, write drafts, reply, organise, handle attachments.
 
 It speaks **JMAP** ([RFC 8620](https://www.rfc-editor.org/rfc/rfc8620) / [RFC 8621](https://www.rfc-editor.org/rfc/rfc8621)), the modern email standard used by Twake Mail and Apache James, so it also works with any JMAP server (Stalwart, Cyrus IMAP, Fastmail…).
 
@@ -43,7 +43,7 @@ Used together, they let one assistant prepare a meeting from the invitation, the
 
 ## Features
 
-### 32 MCP tools
+### 33 MCP tools
 
 | Category | Tools |
 |---|---|
@@ -55,6 +55,7 @@ Used together, they let one assistant prepare a meeting from the invitation, the
 | Mailboxes | `list_mailboxes`, `get_mailbox`, `create_mailbox`, `rename_mailbox`, `set_mailbox_subscription`, `delete_mailbox` ⚠️ |
 | Delete ⚠️ | `delete_email` |
 | Attachments | `get_attachments`, `download_attachment` |
+| Approval | `approve_batch` (one approval for a series of writes, see [below](#approving-a-series-of-writes-at-once)) |
 
 ⚠️ = sends mail on your behalf or deletes data. Every tool carries MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`).
 
@@ -272,6 +273,10 @@ npx mcp-twake-mail call create_draft --json @draft.json
 - **Writes:** typed by you in a terminal, a write is approved without a question (`--i` asks first). Started by an agent (`CLAUDECODE` or `HERMES_HOME` set), a write is refused: agents write through their MCP tools, which ask you. Without a terminal (cron), a write is refused unless it passes `--yes --as <name>` for a name you allowed once, in a terminal, with `npx mcp-twake-mail allow-unattended <name>`. The allowed names are shared by the six Twake.ai servers, in `~/.config/twake-ai/cli.json` (`%USERPROFILE%\AppData\Roaming\twake-ai\cli.json` on Windows).
 - These rules stop an agent that follows instructions; they cannot stop a program that hides that it is an agent, or rewrites `cli.json`, under your account.
 - With [mcp-twake-ai](https://github.com/linagora/mcp-twake-ai), `npx mcp-twake-ai call mail …` does the same with your Twake.ai sign-in.
+
+## Approving a series of writes at once
+
+Before a series of writes (several drafts, several moves), an agent can ask you once for the whole list with `approve_batch`: you see every action, numbered, in one approval. Each call that then carries the `batchId` and matches a listed action exactly runs without another question, once, within 15 minutes. A call that is not in the list, or whose target changed since you approved, asks as usual. With `JMAP_APPROVAL=client`, there is no batch; a tool in `JMAP_APPROVAL_EXEMPT` is listed as asking nothing. Not to be confused with the `batch_*` tools, which are one action on several e-mails.
 
 ## Recommended safe configuration
 

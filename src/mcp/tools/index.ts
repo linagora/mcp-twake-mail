@@ -14,6 +14,9 @@ import { registerEmailSendingTools } from './email-sending.js';
 import { registerAttachmentTools, type AttachmentOptions } from './attachment.js';
 import { registerThreadTools } from './thread.js';
 import { registerBatchOperationTools } from './batch-operations.js';
+import { z } from 'zod';
+import { installBatch } from '../../batch/index.js';
+import { approverFor, WRITE_TOOLS } from '../approval.js';
 
 /**
  * Options for email sending tools.
@@ -38,6 +41,16 @@ export function registerAllTools(
   attachmentOptions?: AttachmentOptions
 ): void {
   logger.debug('Registering MCP tools...');
+
+  // approve_batch, and batchId on every write tool: installed before the tools are registered (spec §5).
+  // Not to be confused with the batch_* tools, which are one action on several e-mails.
+  installBatch(server, {
+    writeTools: WRITE_TOOLS,
+    z,
+    confirm: (message) => approverFor(server).confirmText(message),
+    clientMode: () => approverFor(server).opts.mode === 'client',
+    language: () => approverFor(server).opts.language,
+  });
 
   // Register email tools (get_email, search_emails, get_email_labels)
   registerEmailTools(server, jmapClient, logger);

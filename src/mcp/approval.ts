@@ -9,6 +9,7 @@ import { randomBytes } from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { JMAPClient } from '../jmap/client.js';
 import { humanSize } from './tools/files.js';
+import { BATCH_REF, batchHook, batchMode } from '../batch/index.js';
 
 export type ApprovalMode = 'elicit' | 'client';
 export type Language = 'en' | 'fr';
@@ -59,6 +60,36 @@ const LABELS = {
 } as const;
 
 export type Action = keyof typeof ACTIONS;
+
+/** The tools that ask through gate() before writing: the ones approve_batch accepts. */
+export const WRITE_TOOLS = [
+  'download_attachment',
+  'send_email',
+  'reply_email',
+  'forward_email',
+  'send_draft',
+  'create_draft',
+  'update_draft',
+  'reply_draft',
+  'mark_as_read',
+  'mark_as_unread',
+  'delete_email',
+  'move_email',
+  'add_label',
+  'remove_label',
+  'batch_mark_read',
+  'batch_mark_unread',
+  'batch_move',
+  'batch_delete',
+  'batch_add_label',
+  'batch_remove_label',
+  'create_mailbox',
+  'rename_mailbox',
+  'delete_mailbox',
+  'set_mailbox_subscription',
+] as const;
+
+const NO_APPROVAL = { en: 'no approval asked: JMAP_APPROVAL_EXEMPT', fr: 'sans approbation : JMAP_APPROVAL_EXEMPT' } as const;
 export type Label = keyof (typeof LABELS)['en'];
 
 export interface ApprovalRequest {
@@ -232,6 +263,20 @@ export class Approver {
    * nothing must be written. The details are computed only when the user is actually asked.
    */
   async gate(tool: string, request: () => Promise<ApprovalRequest> | ApprovalRequest): Promise<ToolResult | null> {
+    // inside a batch only (the description may read the account): a call approved in a batch whose text did not
+    // change goes through; approve_batch describing it stops here. An exempted tool is listed as asking nothing.
+    let described: ApprovalRequest | undefined;
+    const mode = batchMode();
+    if (mode) {
+      let text = '';
+      try {
+        if (this.opts.exempt?.includes(tool)) text = `Twake Mail${this.opts.language === 'fr' ? ' : ' : ': '}${tool} (${NO_APPROVAL[this.opts.language]})`;
+        else text = approvalMessage((described = await request()), this.opts, BATCH_REF);
+      } catch (error) {
+        if (mode === 'capture') throw error;
+      }
+      if (batchHook(() => text) === 'approved') return null;
+    }
     if (this.opts.mode === 'client' || this.opts.exempt?.includes(tool)) return null;
     if (!this.server?.getClientCapabilities()?.elicitation) {
       return {
@@ -249,7 +294,7 @@ export class Approver {
     const ref = randomBytes(3).toString('hex');
     let action: string;
     try {
-      const req = await request();
+      const req = described ?? (await request());
       const res = await this.server.elicitInput(
         { mode: 'form', message: approvalMessage(req, this.opts, ref), requestedSchema: { type: 'object', properties: {} } },
         { timeout: this.opts.timeoutMs },
@@ -270,6 +315,17 @@ export class Approver {
         },
       ],
     };
+  }
+
+  /** The batch question (approve_batch): accepted or not, with the same request and timeout as gate. */
+  async confirmText(message: string): Promise<boolean> {
+    if (this.opts.mode === 'client' || !this.server?.getClientCapabilities()?.elicitation) return false;
+    try {
+      const res = await this.server.elicitInput({ mode: 'form', message, requestedSchema: { type: 'object', properties: {} } }, { timeout: this.opts.timeoutMs });
+      return res.action === 'accept';
+    } catch {
+      return false;
+    }
   }
 }
 
