@@ -59,6 +59,21 @@ function scriptedFetch(...responses: Array<Response | ((url: string, init?: Requ
 
 const header = (init: RequestInit | undefined, name: string) => new Headers(init?.headers).get(name);
 
+/** A fetch that sends the headers at once, then a body that ends only when aborted. */
+const stallingBodyFetch = () =>
+  vi.fn(
+    async (_url: string, init?: RequestInit) =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array([1, 2, 3]));
+            init?.signal?.addEventListener('abort', () => controller.error(init.signal?.reason));
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/octet-stream' } }
+      )
+  );
+
 /** A fetch that answers only when aborted, as a server that never answers. */
 const hangingFetch = () =>
   vi.fn(
@@ -203,6 +218,15 @@ describe('createJmapClient and connect', () => {
     it('reports a download that does not answer in time', async () => {
       const hanging = hangingFetch();
       const fetch = scriptedFetch(json(validSession), (url, init) => hanging(url, init));
+      const client = createJmapClient(testConfig({ JMAP_REQUEST_TIMEOUT: 10 }), logger, { fetch });
+      await connect(client, logger);
+
+      await expect(downloadBlob(client, 'blob-1')).rejects.toThrow('blob download timed out');
+    });
+
+    it('reports a download whose body does not arrive in time', async () => {
+      const stalling = stallingBodyFetch();
+      const fetch = scriptedFetch(json(validSession), (url, init) => stalling(url, init));
       const client = createJmapClient(testConfig({ JMAP_REQUEST_TIMEOUT: 10 }), logger, { fetch });
       await connect(client, logger);
 

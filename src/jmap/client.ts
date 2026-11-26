@@ -23,6 +23,9 @@ export type { JmapClient };
 /** Session fetch timeout (quick check) */
 export const SESSION_TIMEOUT = 5000;
 
+/** Statuses whose Response cannot carry a body */
+const NULL_BODY_STATUSES = new Set([101, 204, 205, 304]);
+
 /** The account the server works on, once the session is loaded. */
 export interface JmapAccount {
   accountId: string;
@@ -110,7 +113,11 @@ function timedFetch(config: Config, base: FetchFunction | undefined): FetchFunct
     const signal = init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
     try {
       // globalThis.fetch is read at call time (tests replace it)
-      return await (base ?? globalThis.fetch)(url, { ...init, signal });
+      const response = await (base ?? globalThis.fetch)(url, { ...init, signal });
+      // Read the body here, under the same timeout, so a slow body (a large attachment) is
+      // reported as a timeout too, not only a server that sends no headers.
+      const body = NULL_BODY_STATUSES.has(response.status) ? null : await response.arrayBuffer();
+      return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
     } catch (error) {
       if (timeout.aborted && error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
         throw JMAPError.timeout(operation(url, init, sessionUrl));
