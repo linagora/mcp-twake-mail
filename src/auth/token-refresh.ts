@@ -83,13 +83,32 @@ export class TokenRefresher {
       throw JMAPError.tokenExpired(false);
     }
 
+    return this.refresh(tokens.refreshToken);
+  }
+
+  /**
+   * Refresh the access token even though it has not expired (the server answered 401: it was
+   * revoked or expired early).
+   * @returns false when there is no refresh token to use
+   */
+  async forceRefresh(): Promise<boolean> {
+    const tokens = await loadTokens();
+    if (!tokens?.refreshToken) {
+      return false;
+    }
+    await this.refresh(tokens.refreshToken);
+    return true;
+  }
+
+  /** Refresh once at a time: concurrent callers wait for the same refresh. */
+  private async refresh(refreshToken: string): Promise<StoredTokens> {
     // Mutex: if refresh is already in progress, wait for it
     if (this.refreshPromise) {
       return this.refreshPromise;
     }
 
     // Start refresh and store the promise for concurrent callers
-    this.refreshPromise = this.doRefresh(tokens.refreshToken);
+    this.refreshPromise = this.doRefresh(refreshToken);
 
     try {
       const newTokens = await this.refreshPromise;
