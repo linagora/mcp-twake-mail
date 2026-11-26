@@ -4,6 +4,12 @@ All notable changes to mcp-twake-mail are documented here. The format follows [K
 
 ## [Unreleased]
 
+### Changed
+- JMAP calls go through [@linagora/jmap-client-ts](https://github.com/linagora/jmap-client-ts) 2.0.0-alpha.0 instead of the server's own client. The configuration, the tools and their messages are the same. A server answer of 401 now refreshes the OIDC token, or runs `JMAP_TOKEN_COMMAND` again, then retries once. The session is fetched again when the server says it changed.
+
+### Fixed
+- Approval prompts name the account the server acts as (the session's user name) when `JMAP_DEFAULT_FROM` is not set; they named none.
+
 ## [4.4.0] - 2026-11-20
 
 ### Added
