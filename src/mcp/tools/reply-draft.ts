@@ -4,9 +4,9 @@
  */
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { JMAPClient } from '../../jmap/client.js';
+import type { EmailCreate } from '@linagora/jmap-client-ts';
+import { errorText, type JmapClient } from '../../jmap/client.js';
 import type { Logger } from '../../config/logger.js';
-import type { EmailSetResponse } from '../../types/jmap.js';
 import type { SignatureContent } from '../../signature/index.js';
 import { approverFor } from '../approval.js';
 import { buildDraftBody } from './draft-body.js';
@@ -14,9 +14,7 @@ import { buildQuote } from './quote.js';
 import { draftFiles, promptFiles, uploadFiles, type DraftFileOptions, type LocalFile } from './files.js';
 import { describeOriginal, ORIGINAL_PROPERTIES, replyRecipients, replySubject, threadingHeaders, type Original } from './reply.js';
 
-const SUBMISSION_USING = ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail', 'urn:ietf:params:jmap:submission'];
-
-type Part = { partId: string; type: string };
+type Part = { partId: string | null; type: string };
 type OriginalWithBody = Original & { textBody?: Part[]; htmlBody?: Part[]; bodyValues?: Record<string, { value: string }> };
 
 const fail = (text: string) => ({ isError: true, content: [{ type: 'text' as const, text }] });
@@ -25,14 +23,14 @@ const fail = (text: string) => ({ isError: true, content: [{ type: 'text' as con
 function bodies(o: OriginalWithBody): { text?: string; html?: string } {
   const value = (parts: Part[] | undefined, type: string) => {
     const part = parts?.find((p) => p.type === type);
-    return part ? o.bodyValues?.[part.partId]?.value : undefined;
+    return part ? o.bodyValues?.[part.partId ?? '']?.value : undefined;
   };
   return { text: value(o.textBody, 'text/plain'), html: value(o.htmlBody, 'text/html') };
 }
 
 export function registerReplyDraftTool(
   server: McpServer,
-  jmapClient: JMAPClient,
+  jmapClient: JmapClient,
   logger: Logger,
   signatureContent?: SignatureContent,
   fileOptions?: DraftFileOptions
@@ -64,43 +62,35 @@ export function registerReplyDraftTool(
       if (!body && !htmlBody) return fail('Give body or htmlBody: the text of the reply, without signature or quote.');
 
       try {
-        const session = jmapClient.getSession();
+        const accountId = jmapClient.getPrimaryAccountId();
         let files: LocalFile[] = [];
         if (attachments?.length) {
           try {
-            files = await draftFiles(session, fileOptions, attachments);
+            files = await draftFiles(await jmapClient.getSession(), fileOptions, attachments);
           } catch (error) {
             return fail((error as Error).message);
           }
         }
-        const setup = await jmapClient.request([
-          ['Mailbox/get', { accountId: session.accountId, properties: ['id', 'role'] }, 'getMailboxes'],
-          [
-            'Email/get',
-            {
-              accountId: session.accountId,
-              ids: [originalEmailId],
-              properties: [...ORIGINAL_PROPERTIES, 'textBody', 'htmlBody', 'bodyValues'],
-              fetchTextBodyValues: true,
-              fetchHTMLBodyValues: true,
-            },
-            'getOriginal',
-          ],
+        const [mailboxes, got] = await jmapClient.requestSettled((b) => [
+          b.call('Mailbox/get', { accountId, properties: ['id', 'role'] }),
+          b.call('Email/get', {
+            accountId,
+            ids: [originalEmailId],
+            properties: [...ORIGINAL_PROPERTIES, 'textBody', 'htmlBody', 'bodyValues'],
+            fetchTextBodyValues: true,
+            fetchHTMLBodyValues: true,
+          }),
         ]);
-        const mailboxes = jmapClient.parseMethodResponse(setup.methodResponses[0]);
-        if (!mailboxes.success) return fail('Failed to get mailboxes');
-        const drafts = (mailboxes.data as { list: Array<{ id: string; role: string | null }> }).list.find((m) => m.role === 'drafts');
-        const got = jmapClient.parseMethodResponse(setup.methodResponses[1]);
-        const original = got.success ? ((got.data as { list?: OriginalWithBody[] }).list ?? [])[0] : undefined;
+        if (!mailboxes.ok) return fail('Failed to get mailboxes');
+        const drafts = mailboxes.value.list.find((m) => m.role === 'drafts');
+        const original: OriginalWithBody | undefined = got.ok ? got.value.list[0] : undefined;
         if (!original) return fail(`Original email not found: ${originalEmailId}`);
         if (!drafts) return fail('No Drafts mailbox found. Cannot create draft.');
 
         // Without the submission capability there is no identity: no From, and reply-all keeps every address
-        let identity: { email: string; name?: string } | undefined;
+        let identity: { email: string; name?: string | null } | undefined;
         try {
-          const res = await jmapClient.request([['Identity/get', { accountId: session.accountId }, 'getIdentity']], SUBMISSION_USING);
-          const parsed = jmapClient.parseMethodResponse(res.methodResponses[0]);
-          if (parsed.success) identity = (parsed.data as { list?: Array<{ email: string; name?: string }> }).list?.[0];
+          identity = (await jmapClient.call('Identity/get', { accountId })).list[0];
         } catch {
           logger.debug('Could not fetch identity for reply_draft - will create without from field');
         }
@@ -138,10 +128,12 @@ export function registerReplyDraftTool(
         if (refused) return refused;
         if (files.length) emailCreate.attachments = await uploadFiles(jmapClient, files);
 
-        const response = await jmapClient.request([['Email/set', { accountId: session.accountId, create: { draft: emailCreate } }, 'createDraft']]);
-        const result = jmapClient.parseMethodResponse(response.methodResponses[0]);
-        if (!result.success) return fail(`Failed to create draft: ${result.error?.description || result.error?.type || 'Unknown error'}`);
-        const set = result.data as unknown as EmailSetResponse;
+        // EmailCreate wants a name with every address: the recipients go as the original had them
+        const [result] = await jmapClient.requestSettled((b) => [
+          b.call('Email/set', { accountId, create: { draft: emailCreate as unknown as EmailCreate } }),
+        ]);
+        if (!result.ok) return fail(`Failed to create draft: ${errorText(result.error)}`);
+        const set = result.value;
         const notCreated = set.notCreated?.draft;
         if (notCreated) return fail(`Failed to create draft: ${notCreated.type} - ${notCreated.description || ''}`);
         const created = set.created?.draft;
@@ -158,7 +150,7 @@ export function registerReplyDraftTool(
         };
       } catch (error) {
         logger.error({ error }, 'Exception in reply_draft');
-        return fail(`Error creating reply draft: ${error instanceof Error ? error.message : String(error)}`);
+        return fail(`Error creating reply draft: ${errorText(error)}`);
       }
     }
   );

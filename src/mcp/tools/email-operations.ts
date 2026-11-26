@@ -6,15 +6,23 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
-import type { JMAPClient } from '../../jmap/client.js';
+import type { Email, EmailBodyPart, EmailCreate, PatchObject } from '@linagora/jmap-client-ts';
+import { errorText, type JmapClient } from '../../jmap/client.js';
 import type { Logger } from '../../config/logger.js';
-import type { EmailSetResponse, Identity, EmailSubmissionSetResponse } from '../../types/jmap.js';
 import type { SignatureContent } from '../../signature/index.js';
 import { buildDraftBody } from './draft-body.js';
 import { findQuote } from './quote.js';
 import { approverFor } from '../approval.js';
 import { describeOriginal, ORIGINAL_PROPERTIES, threadingHeaders, type Original } from './reply.js';
 import { draftFiles, promptFiles, uploadFiles, type DraftFileOptions, type LocalFile } from './files.js';
+
+/**
+ * An Email/set creation built field by field (and shown as is in the approval prompt). Not typed
+ * as EmailCreate: its addresses require `name` and its body parts a non-null `partId`/`blobId`,
+ * where JMAP servers take `{ email }` alone and the parts read back from a draft.
+ */
+type DraftCreate = Record<string, unknown>;
+const asEmailCreate = (draft: DraftCreate) => draft as unknown as EmailCreate;
 
 /**
  * Common annotations for non-destructive write operations.
@@ -57,15 +65,6 @@ const EMAIL_SEND_ANNOTATIONS: ToolAnnotations = {
 };
 
 /**
- * JMAP capabilities required for email submission.
- */
-const SUBMISSION_USING = [
-  'urn:ietf:params:jmap:core',
-  'urn:ietf:params:jmap:mail',
-  'urn:ietf:params:jmap:submission',
-];
-
-/**
  * Register email operation MCP tools with the server.
  * @param server MCP server instance
  * @param jmapClient JMAP client for API calls
@@ -73,7 +72,7 @@ const SUBMISSION_USING = [
  */
 export function registerEmailOperationTools(
   server: McpServer,
-  jmapClient: JMAPClient,
+  jmapClient: JmapClient,
   logger: Logger,
   signatureContent?: SignatureContent,
   fileOptions?: DraftFileOptions
@@ -95,37 +94,29 @@ export function registerEmailOperationTools(
       if (refused) return refused;
 
       try {
-        const session = jmapClient.getSession();
-        const response = await jmapClient.request([
-          [
-            'Email/set',
-            {
-              accountId: session.accountId,
+        const accountId = jmapClient.getPrimaryAccountId();
+        const [result] = await jmapClient.requestSettled((b) => [b.call('Email/set', {
+              accountId,
               update: {
                 [emailId]: {
                   'keywords/$seen': true,
                 },
               },
-            },
-            'markRead',
-          ],
-        ]);
-
-        const result = jmapClient.parseMethodResponse(response.methodResponses[0]);
-        if (!result.success) {
+            })]);
+        if (!result.ok) {
           logger.error({ error: result.error, emailId }, 'JMAP error in mark_as_read');
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
-                text: `Failed to mark email as read: ${result.error?.description || result.error?.type || 'Unknown error'}`,
+                text: `Failed to mark email as read: ${errorText(result.error)}`,
               },
             ],
           };
         }
 
-        const setResponse = result.data as unknown as EmailSetResponse;
+        const setResponse = result.value;
         if (setResponse.notUpdated?.[emailId]) {
           const error = setResponse.notUpdated[emailId];
           logger.error({ error, emailId }, 'Email/set notUpdated in mark_as_read');
@@ -156,7 +147,7 @@ export function registerEmailOperationTools(
           content: [
             {
               type: 'text' as const,
-              text: `Error marking email as read: ${error instanceof Error ? error.message : String(error)}`,
+              text: `Error marking email as read: ${errorText(error)}`,
             },
           ],
         };
@@ -181,37 +172,29 @@ export function registerEmailOperationTools(
       if (refused) return refused;
 
       try {
-        const session = jmapClient.getSession();
-        const response = await jmapClient.request([
-          [
-            'Email/set',
-            {
-              accountId: session.accountId,
+        const accountId = jmapClient.getPrimaryAccountId();
+        const [result] = await jmapClient.requestSettled((b) => [b.call('Email/set', {
+              accountId,
               update: {
                 [emailId]: {
                   'keywords/$seen': null,
                 },
               },
-            },
-            'markUnread',
-          ],
-        ]);
-
-        const result = jmapClient.parseMethodResponse(response.methodResponses[0]);
-        if (!result.success) {
+            })]);
+        if (!result.ok) {
           logger.error({ error: result.error, emailId }, 'JMAP error in mark_as_unread');
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
-                text: `Failed to mark email as unread: ${result.error?.description || result.error?.type || 'Unknown error'}`,
+                text: `Failed to mark email as unread: ${errorText(result.error)}`,
               },
             ],
           };
         }
 
-        const setResponse = result.data as unknown as EmailSetResponse;
+        const setResponse = result.value;
         if (setResponse.notUpdated?.[emailId]) {
           const error = setResponse.notUpdated[emailId];
           logger.error({ error, emailId }, 'Email/set notUpdated in mark_as_unread');
@@ -242,7 +225,7 @@ export function registerEmailOperationTools(
           content: [
             {
               type: 'text' as const,
-              text: `Error marking email as unread: ${error instanceof Error ? error.message : String(error)}`,
+              text: `Error marking email as unread: ${errorText(error)}`,
             },
           ],
         };
@@ -272,36 +255,28 @@ export function registerEmailOperationTools(
       if (refused) return refused;
 
       try {
-        const session = jmapClient.getSession();
+        const accountId = jmapClient.getPrimaryAccountId();
 
         if (permanent) {
           // Permanent delete using destroy
-          const response = await jmapClient.request([
-            [
-              'Email/set',
-              {
-                accountId: session.accountId,
+          const [result] = await jmapClient.requestSettled((b) => [b.call('Email/set', {
+                accountId,
                 destroy: [emailId],
-              },
-              'destroyEmail',
-            ],
-          ]);
-
-          const result = jmapClient.parseMethodResponse(response.methodResponses[0]);
-          if (!result.success) {
+              })]);
+          if (!result.ok) {
             logger.error({ error: result.error, emailId }, 'JMAP error in delete_email (permanent)');
             return {
               isError: true,
               content: [
                 {
                   type: 'text' as const,
-                  text: `Failed to delete email: ${result.error?.description || result.error?.type || 'Unknown error'}`,
+                  text: `Failed to delete email: ${errorText(result.error)}`,
                 },
               ],
             };
           }
 
-          const setResponse = result.data as unknown as EmailSetResponse;
+          const setResponse = result.value;
           if (setResponse.notDestroyed?.[emailId]) {
             const error = setResponse.notDestroyed[emailId];
             logger.error({ error, emailId }, 'Email/set notDestroyed in delete_email');
@@ -328,19 +303,11 @@ export function registerEmailOperationTools(
         } else {
           // Move to Trash
           // First find Trash mailbox
-          const mailboxResponse = await jmapClient.request([
-            [
-              'Mailbox/query',
-              {
-                accountId: session.accountId,
+          const [queryResult] = await jmapClient.requestSettled((b) => [b.call('Mailbox/query', {
+                accountId,
                 filter: { role: 'trash' },
-              },
-              'findTrash',
-            ],
-          ]);
-
-          const queryResult = jmapClient.parseMethodResponse(mailboxResponse.methodResponses[0]);
-          if (!queryResult.success) {
+              })]);
+          if (!queryResult.ok) {
             logger.error({ error: queryResult.error }, 'JMAP error finding Trash mailbox');
             return {
               isError: true,
@@ -353,26 +320,16 @@ export function registerEmailOperationTools(
             };
           }
 
-          const trashIds = (queryResult.data as { ids: string[] }).ids;
+          const trashIds = queryResult.value.ids;
           if (!trashIds || trashIds.length === 0) {
             // No Trash mailbox, fall back to permanent delete
             logger.warn({ emailId }, 'No Trash mailbox found, performing permanent delete');
 
-            const destroyResponse = await jmapClient.request([
-              [
-                'Email/set',
-                {
-                  accountId: session.accountId,
+            const [destroyResult] = await jmapClient.requestSettled((b) => [b.call('Email/set', {
+                  accountId,
                   destroy: [emailId],
-                },
-                'destroyEmailFallback',
-              ],
-            ]);
-
-            const destroyResult = jmapClient.parseMethodResponse(
-              destroyResponse.methodResponses[0]
-            );
-            if (!destroyResult.success) {
+                })]);
+            if (!destroyResult.ok) {
               logger.error(
                 { error: destroyResult.error, emailId },
                 'JMAP error in delete_email (fallback)'
@@ -382,13 +339,13 @@ export function registerEmailOperationTools(
                 content: [
                   {
                     type: 'text' as const,
-                    text: `Failed to delete email: ${destroyResult.error?.description || destroyResult.error?.type || 'Unknown error'}`,
+                    text: `Failed to delete email: ${errorText(destroyResult.error)}`,
                   },
                 ],
               };
             }
 
-            const destroySetResponse = destroyResult.data as unknown as EmailSetResponse;
+            const destroySetResponse = destroyResult.value;
             if (destroySetResponse.notDestroyed?.[emailId]) {
               const error = destroySetResponse.notDestroyed[emailId];
               logger.error({ error, emailId }, 'Email/set notDestroyed in delete_email (fallback)');
@@ -416,36 +373,28 @@ export function registerEmailOperationTools(
           const trashMailboxId = trashIds[0];
 
           // Move to Trash (replace all mailboxIds with just Trash)
-          const moveResponse = await jmapClient.request([
-            [
-              'Email/set',
-              {
-                accountId: session.accountId,
+          const [moveResult] = await jmapClient.requestSettled((b) => [b.call('Email/set', {
+                accountId,
                 update: {
                   [emailId]: {
                     mailboxIds: { [trashMailboxId]: true },
                   },
                 },
-              },
-              'moveToTrash',
-            ],
-          ]);
-
-          const moveResult = jmapClient.parseMethodResponse(moveResponse.methodResponses[0]);
-          if (!moveResult.success) {
+              })]);
+          if (!moveResult.ok) {
             logger.error({ error: moveResult.error, emailId }, 'JMAP error in delete_email (move)');
             return {
               isError: true,
               content: [
                 {
                   type: 'text' as const,
-                  text: `Failed to move email to Trash: ${moveResult.error?.description || moveResult.error?.type || 'Unknown error'}`,
+                  text: `Failed to move email to Trash: ${errorText(moveResult.error)}`,
                 },
               ],
             };
           }
 
-          const moveSetResponse = moveResult.data as unknown as EmailSetResponse;
+          const moveSetResponse = moveResult.value;
           if (moveSetResponse.notUpdated?.[emailId]) {
             const error = moveSetResponse.notUpdated[emailId];
             logger.error({ error, emailId }, 'Email/set notUpdated in delete_email (move)');
@@ -477,7 +426,7 @@ export function registerEmailOperationTools(
           content: [
             {
               type: 'text' as const,
-              text: `Error deleting email: ${error instanceof Error ? error.message : String(error)}`,
+              text: `Error deleting email: ${errorText(error)}`,
             },
           ],
         };
@@ -503,37 +452,29 @@ export function registerEmailOperationTools(
       if (refused) return refused;
 
       try {
-        const session = jmapClient.getSession();
-        const response = await jmapClient.request([
-          [
-            'Email/set',
-            {
-              accountId: session.accountId,
+        const accountId = jmapClient.getPrimaryAccountId();
+        const [result] = await jmapClient.requestSettled((b) => [b.call('Email/set', {
+              accountId,
               update: {
                 [emailId]: {
                   mailboxIds: { [targetMailboxId]: true },
                 },
               },
-            },
-            'moveEmail',
-          ],
-        ]);
-
-        const result = jmapClient.parseMethodResponse(response.methodResponses[0]);
-        if (!result.success) {
+            })]);
+        if (!result.ok) {
           logger.error({ error: result.error, emailId }, 'JMAP error in move_email');
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
-                text: `Failed to move email: ${result.error?.description || result.error?.type || 'Unknown error'}`,
+                text: `Failed to move email: ${errorText(result.error)}`,
               },
             ],
           };
         }
 
-        const setResponse = result.data as unknown as EmailSetResponse;
+        const setResponse = result.value;
         if (setResponse.notUpdated?.[emailId]) {
           const error = setResponse.notUpdated[emailId];
           logger.error({ error, emailId }, 'Email/set notUpdated in move_email');
@@ -564,7 +505,7 @@ export function registerEmailOperationTools(
           content: [
             {
               type: 'text' as const,
-              text: `Error moving email: ${error instanceof Error ? error.message : String(error)}`,
+              text: `Error moving email: ${errorText(error)}`,
             },
           ],
         };
@@ -590,37 +531,29 @@ export function registerEmailOperationTools(
       if (refused) return refused;
 
       try {
-        const session = jmapClient.getSession();
-        const response = await jmapClient.request([
-          [
-            'Email/set',
-            {
-              accountId: session.accountId,
+        const accountId = jmapClient.getPrimaryAccountId();
+        const [result] = await jmapClient.requestSettled((b) => [b.call('Email/set', {
+              accountId,
               update: {
                 [emailId]: {
                   [`mailboxIds/${mailboxId}`]: true,
                 },
               },
-            },
-            'addLabel',
-          ],
-        ]);
-
-        const result = jmapClient.parseMethodResponse(response.methodResponses[0]);
-        if (!result.success) {
+            })]);
+        if (!result.ok) {
           logger.error({ error: result.error, emailId }, 'JMAP error in add_label');
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
-                text: `Failed to add label: ${result.error?.description || result.error?.type || 'Unknown error'}`,
+                text: `Failed to add label: ${errorText(result.error)}`,
               },
             ],
           };
         }
 
-        const setResponse = result.data as unknown as EmailSetResponse;
+        const setResponse = result.value;
         if (setResponse.notUpdated?.[emailId]) {
           const error = setResponse.notUpdated[emailId];
           logger.error({ error, emailId }, 'Email/set notUpdated in add_label');
@@ -651,7 +584,7 @@ export function registerEmailOperationTools(
           content: [
             {
               type: 'text' as const,
-              text: `Error adding label: ${error instanceof Error ? error.message : String(error)}`,
+              text: `Error adding label: ${errorText(error)}`,
             },
           ],
         };
@@ -677,37 +610,29 @@ export function registerEmailOperationTools(
       if (refused) return refused;
 
       try {
-        const session = jmapClient.getSession();
-        const response = await jmapClient.request([
-          [
-            'Email/set',
-            {
-              accountId: session.accountId,
+        const accountId = jmapClient.getPrimaryAccountId();
+        const [result] = await jmapClient.requestSettled((b) => [b.call('Email/set', {
+              accountId,
               update: {
                 [emailId]: {
                   [`mailboxIds/${mailboxId}`]: null,
                 },
               },
-            },
-            'removeLabel',
-          ],
-        ]);
-
-        const result = jmapClient.parseMethodResponse(response.methodResponses[0]);
-        if (!result.success) {
+            })]);
+        if (!result.ok) {
           logger.error({ error: result.error, emailId }, 'JMAP error in remove_label');
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
-                text: `Failed to remove label: ${result.error?.description || result.error?.type || 'Unknown error'}`,
+                text: `Failed to remove label: ${errorText(result.error)}`,
               },
             ],
           };
         }
 
-        const setResponse = result.data as unknown as EmailSetResponse;
+        const setResponse = result.value;
         if (setResponse.notUpdated?.[emailId]) {
           const error = setResponse.notUpdated[emailId];
           logger.error({ error, emailId }, 'Email/set notUpdated in remove_label');
@@ -750,7 +675,7 @@ export function registerEmailOperationTools(
           content: [
             {
               type: 'text' as const,
-              text: `Error removing label: ${error instanceof Error ? error.message : String(error)}`,
+              text: `Error removing label: ${errorText(error)}`,
             },
           ],
         };
@@ -807,37 +732,35 @@ export function registerEmailOperationTools(
       }
 
       try {
-        const session = jmapClient.getSession();
+        const accountId = jmapClient.getPrimaryAccountId();
 
         // Check the files first: nothing is read from the server or uploaded for a file that cannot go
         let files: LocalFile[] = [];
         if (attachments?.length) {
           try {
-            files = await draftFiles(session, fileOptions, attachments);
+            files = await draftFiles(await jmapClient.getSession(), fileOptions, attachments);
           } catch (error) {
             return { isError: true, content: [{ type: 'text' as const, text: (error as Error).message }] };
           }
         }
 
         // Get Drafts mailbox first (doesn't need submission capability), and the e-mail answered if any
-        const mailboxResponse = await jmapClient.request([
-          [
-            'Mailbox/get',
-            {
-              accountId: session.accountId,
-              properties: ['id', 'role'],
-            },
-            'getMailboxes',
-          ],
-          ...(replyToEmailId
-            ? [['Email/get', { accountId: session.accountId, ids: [replyToEmailId], properties: ORIGINAL_PROPERTIES }, 'getOriginal'] as [string, Record<string, unknown>, string]]
-            : []),
-        ]);
+        let originalGet: Promise<Original | undefined> = Promise.resolve(undefined);
+        const [getResult] = await jmapClient.requestSettled((b) => {
+          const mailboxes = b.call('Mailbox/get', { accountId, properties: ['id', 'role'] });
+          if (replyToEmailId) {
+            // refused or missing: reported as not found below
+            originalGet = Promise.resolve(b.call('Email/get', { accountId, ids: [replyToEmailId], properties: ORIGINAL_PROPERTIES })).then(
+              (got) => got.list[0],
+              () => undefined
+            );
+          }
+          return [mailboxes];
+        });
 
         let original: Original | undefined;
         if (replyToEmailId) {
-          const originalResult = jmapClient.parseMethodResponse(mailboxResponse.methodResponses[1]);
-          original = originalResult.success ? ((originalResult.data as { list?: Original[] }).list ?? [])[0] : undefined;
+          original = await originalGet;
           if (!original) {
             return {
               isError: true,
@@ -846,26 +769,16 @@ export function registerEmailOperationTools(
           }
         }
 
-        // Parse Mailbox response
-        const getResult = jmapClient.parseMethodResponse(mailboxResponse.methodResponses[0]);
-
         // Try to get identity separately (needs submission capability)
-        let identity: { id: string; email: string; name?: string } | undefined;
+        let identity: { id: string; email: string; name?: string | null } | undefined;
         try {
-          const identityResponse = await jmapClient.request(
-            [['Identity/get', { accountId: session.accountId }, 'getIdentity']],
-            ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail', 'urn:ietf:params:jmap:submission']
-          );
-          const identityResult = jmapClient.parseMethodResponse(identityResponse.methodResponses[0]);
-          if (identityResult.success) {
-            const identities = (identityResult.data as { list: Array<{ id: string; email: string; name?: string }> }).list;
-            identity = identities?.[0];
-          }
+          const identities = await jmapClient.call('Identity/get', { accountId });
+          identity = identities.list[0];
         } catch {
           // Identity fetch failed - draft will be created without from field
           logger.debug('Could not fetch identity for draft - will create without from field');
         }
-        if (!getResult.success) {
+        if (!getResult.ok) {
           logger.error({ error: getResult.error }, 'JMAP error getting mailboxes');
           return {
             isError: true,
@@ -878,7 +791,7 @@ export function registerEmailOperationTools(
           };
         }
 
-        const mailboxes = (getResult.data as { list: Array<{ id: string; role: string | null }> }).list;
+        const mailboxes = getResult.value.list;
         const draftsMailbox = mailboxes.find((mb) => mb.role === 'drafts');
         if (!draftsMailbox) {
           logger.error({}, 'No Drafts mailbox found');
@@ -897,7 +810,7 @@ export function registerEmailOperationTools(
 
         // Build email create object
         // Use textBody instead of bodyStructure for better server compatibility
-        const emailCreate: Record<string, unknown> = {
+        const emailCreate: DraftCreate = {
           mailboxIds: { [draftsMailboxId]: true },
           keywords: { '$draft': true, '$seen': true },
           subject: subject || '',
@@ -944,34 +857,26 @@ export function registerEmailOperationTools(
         }));
         if (refused) return refused;
         if (files.length) emailCreate.attachments = await uploadFiles(jmapClient, files);
-        const createResponse = await jmapClient.request([
-          [
-            'Email/set',
-            {
-              accountId: session.accountId,
+        const [createResult] = await jmapClient.requestSettled((b) => [b.call('Email/set', {
+              accountId,
               create: {
-                draft: emailCreate,
+                draft: asEmailCreate(emailCreate),
               },
-            },
-            'createDraft',
-          ],
-        ]);
-
-        const createResult = jmapClient.parseMethodResponse(createResponse.methodResponses[0]);
-        if (!createResult.success) {
+            })]);
+        if (!createResult.ok) {
           logger.error({ error: createResult.error }, 'JMAP error in create_draft');
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
-                text: `Failed to create draft: ${createResult.error?.description || createResult.error?.type || 'Unknown error'}`,
+                text: `Failed to create draft: ${errorText(createResult.error)}`,
               },
             ],
           };
         }
 
-        const setResponse = createResult.data as unknown as EmailSetResponse;
+        const setResponse = createResult.value;
         if (setResponse.notCreated?.draft) {
           const error = setResponse.notCreated.draft;
           logger.error({ error }, 'Email/set notCreated in create_draft');
@@ -1016,7 +921,7 @@ export function registerEmailOperationTools(
           content: [
             {
               type: 'text' as const,
-              text: `Error creating draft: ${error instanceof Error ? error.message : String(error)}`,
+              text: `Error creating draft: ${errorText(error)}`,
             },
           ],
         };
@@ -1073,30 +978,22 @@ export function registerEmailOperationTools(
 
         // JMAP e-mails are immutable except keywords and mailboxes (RFC 8621 §4.6): a draft is changed
         // by creating its new version and destroying the old one, in one request.
-        const session = jmapClient.getSession();
+        const accountId = jmapClient.getPrimaryAccountId();
         let files: LocalFile[] = [];
         if (attachments?.length) {
           try {
-            files = await draftFiles(session, fileOptions, attachments);
+            files = await draftFiles(await jmapClient.getSession(), fileOptions, attachments);
           } catch (error) {
             return { isError: true, content: [{ type: 'text' as const, text: (error as Error).message }] };
           }
         }
-        const getResponse = await jmapClient.request([
-          [
-            'Email/get',
-            {
-              accountId: session.accountId,
+        const [got] = await jmapClient.requestSettled((b) => [b.call('Email/get', {
+              accountId,
               ids: [draftId],
               properties: ['from', 'to', 'cc', 'bcc', 'replyTo', 'subject', 'inReplyTo', 'references', 'mailboxIds', 'keywords', 'textBody', 'htmlBody', 'bodyValues', 'attachments'],
               fetchAllBodyValues: true,
-            },
-            'getDraft',
-          ],
-        ]);
-        const got = jmapClient.parseMethodResponse(getResponse.methodResponses[0]);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- JMAP Email object, read field by field below
-        const draft = got.success ? ((got.data as { list?: Record<string, any>[] }).list ?? [])[0] : undefined;
+            })]);
+        const draft = got.ok ? got.value.list[0] : undefined;
         if (!draft) {
           return { isError: true, content: [{ type: 'text' as const, text: 'Draft not found. It may have been deleted or sent.' }] };
         }
@@ -1104,8 +1001,8 @@ export function registerEmailOperationTools(
           return { isError: true, content: [{ type: 'text' as const, text: 'This e-mail is not a draft: only drafts can be updated.' }] };
         }
 
-        const part = (p: { partId?: string; type?: string }) => ({ partId: p.partId, type: p.type });
-        const replacement: Record<string, unknown> = {
+        const part = (p: EmailBodyPart) => ({ partId: p.partId, type: p.type });
+        const replacement: DraftCreate = {
           mailboxIds: draft.mailboxIds,
           keywords: draft.keywords,
           from: draft.from,
@@ -1125,7 +1022,7 @@ export function registerEmailOperationTools(
         if (body !== undefined) {
           // Keep what the new body does not replace: the quote of a reply draft, and no signature if it had none
           const values = (draft.bodyValues ?? {}) as Record<string, { value: string }>;
-          const partOf = (parts: { partId?: string; type?: string }[] | undefined, type: string) => {
+          const partOf = (parts: EmailBodyPart[] | undefined, type: string) => {
             const p = parts?.find((x) => x.type === type);
             return p?.partId ? values[p.partId]?.value : undefined;
           };
@@ -1147,7 +1044,7 @@ export function registerEmailOperationTools(
           if (draft.textBody?.length) replacement.textBody = draft.textBody.map(part);
           if (draft.htmlBody?.length) replacement.htmlBody = draft.htmlBody.map(part);
         }
-        let remaining = (Array.isArray(draft.attachments) ? draft.attachments : []) as Record<string, unknown>[];
+        let remaining: EmailBodyPart[] = Array.isArray(draft.attachments) ? draft.attachments : [];
         for (const name of removeAttachments ?? []) {
           if (!remaining.some((a) => a.name === name)) {
             const names = remaining.map((a) => a.name).join(', ') || 'none';
@@ -1169,22 +1066,17 @@ export function registerEmailOperationTools(
         if (refused) return refused;
         if (files.length) replacement.attachments = [...keptAttachments, ...(await uploadFiles(jmapClient, files))];
 
-        const requestParams: Record<string, unknown> = {
-          accountId: session.accountId,
-          create: { draft: replacement },
-          destroy: [draftId],
-        };
-        if (ifInState) {
-          requestParams.ifInState = ifInState;
-        }
-
-        const response = await jmapClient.request([['Email/set', requestParams, 'updateDraft']]);
-
-        // Level 1: parseMethodResponse check
-        const result = jmapClient.parseMethodResponse(response.methodResponses[0]);
-        if (!result.success) {
+        const [result] = await jmapClient.requestSettled((b) => [
+          b.call('Email/set', {
+            accountId,
+            create: { draft: asEmailCreate(replacement) },
+            destroy: [draftId],
+            ifInState: ifInState || undefined,
+          }),
+        ]);
+        if (!result.ok) {
           logger.error({ error: result.error, draftId }, 'JMAP error in update_draft');
-          if (result.error?.type === 'stateMismatch') {
+          if (result.error.type === 'stateMismatch') {
             return {
               isError: true,
               content: [{ type: 'text' as const, text: 'Draft was modified by another client. Please refresh and try again.' }],
@@ -1195,16 +1087,14 @@ export function registerEmailOperationTools(
             content: [
               {
                 type: 'text' as const,
-                text: `Failed to update draft: ${result.error?.description || result.error?.type || 'Unknown error'}`,
+                text: `Failed to update draft: ${errorText(result.error)}`,
               },
             ],
           };
         }
 
         // Level 2: notCreated / notDestroyed checks
-        const setResponse = result.data as unknown as EmailSetResponse & {
-          notDestroyed?: Record<string, { type: string; description?: string }>;
-        };
+        const setResponse = result.value;
         const notCreated = setResponse.notCreated?.draft;
         if (notCreated) {
           logger.error({ error: notCreated, draftId }, 'Email/set notCreated in update_draft');
@@ -1240,7 +1130,7 @@ export function registerEmailOperationTools(
           content: [
             {
               type: 'text' as const,
-              text: `Error updating draft: ${error instanceof Error ? error.message : String(error)}`,
+              text: `Error updating draft: ${errorText(error)}`,
             },
           ],
         };
@@ -1265,20 +1155,15 @@ export function registerEmailOperationTools(
       if (refused) return refused;
 
       try {
-        const session = jmapClient.getSession();
+        const accountId = jmapClient.getPrimaryAccountId();
 
         // Step 1: Get identity and mailboxes in a single batch
-        const setupResponse = await jmapClient.request(
-          [
-            ['Identity/get', { accountId: session.accountId }, 'getIdentity'],
-            ['Mailbox/get', { accountId: session.accountId, properties: ['id', 'role'] }, 'getMailboxes'],
-          ],
-          SUBMISSION_USING
-        );
+        const [identityResult, mailboxResult] = await jmapClient.requestSettled((b) => [
+          b.call('Identity/get', { accountId }),
+          b.call('Mailbox/get', { accountId, properties: ['id', 'role'] }),
+        ]);
 
-        // Parse Identity response
-        const identityResult = jmapClient.parseMethodResponse(setupResponse.methodResponses[0]);
-        if (!identityResult.success) {
+        if (!identityResult.ok) {
           logger.error({ error: identityResult.error }, 'Failed to get identity');
           return {
             isError: true,
@@ -1291,7 +1176,7 @@ export function registerEmailOperationTools(
           };
         }
 
-        const identities = (identityResult.data as { list: Identity[] }).list;
+        const identities = identityResult.value.list;
         if (!identities || identities.length === 0) {
           logger.error({}, 'No sending identity available');
           return {
@@ -1306,9 +1191,8 @@ export function registerEmailOperationTools(
         }
         const identity = identities[0];
 
-        // Parse Mailbox response and find Sent/Drafts by role
-        const mailboxResult = jmapClient.parseMethodResponse(setupResponse.methodResponses[1]);
-        if (!mailboxResult.success) {
+        // Find Sent/Drafts by role
+        if (!mailboxResult.ok) {
           logger.error({ error: mailboxResult.error }, 'Failed to get mailboxes');
           return {
             isError: true,
@@ -1321,12 +1205,12 @@ export function registerEmailOperationTools(
           };
         }
 
-        const mailboxes = (mailboxResult.data as { list: Array<{ id: string; role: string | null }> }).list;
+        const mailboxes = mailboxResult.value.list;
         const sentMailbox = mailboxes.find((mb) => mb.role === 'sent');
         const draftsMailbox = mailboxes.find((mb) => mb.role === 'drafts');
 
         // Step 2: Build onSuccessUpdateEmail for atomic draft-to-sent transition
-        const onSuccessUpdate: Record<string, unknown> = {
+        const onSuccessUpdate: PatchObject<Email> = {
           'keywords/$draft': null,
         };
 
@@ -1336,42 +1220,34 @@ export function registerEmailOperationTools(
         }
 
         // Step 3: Submit the draft via EmailSubmission/set
-        const sendResponse = await jmapClient.request(
-          [
-            [
-              'EmailSubmission/set',
-              {
-                accountId: session.accountId,
-                create: {
-                  submission: {
-                    identityId: identity.id,
-                    emailId: draftId,
-                  },
-                },
-                onSuccessUpdateEmail: { '#submission': onSuccessUpdate },
+        const [submissionResult] = await jmapClient.requestSettled((b) => [
+          b.call('EmailSubmission/set', {
+            accountId,
+            create: {
+              submission: {
+                identityId: identity.id,
+                emailId: draftId,
               },
-              'submitDraft',
-            ],
-          ],
-          SUBMISSION_USING
-        );
+            },
+            onSuccessUpdateEmail: { '#submission': onSuccessUpdate },
+          }),
+        ]);
 
         // Step 4: Check EmailSubmission/set response
-        const submissionResult = jmapClient.parseMethodResponse(sendResponse.methodResponses[0]);
-        if (!submissionResult.success) {
+        if (!submissionResult.ok) {
           logger.error({ error: submissionResult.error, draftId }, 'JMAP error in send_draft');
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
-                text: `Failed to send draft: ${submissionResult.error?.description || submissionResult.error?.type || 'Unknown error'}`,
+                text: `Failed to send draft: ${errorText(submissionResult.error)}`,
               },
             ],
           };
         }
 
-        const submissionSetResponse = submissionResult.data as unknown as EmailSubmissionSetResponse;
+        const submissionSetResponse = submissionResult.value;
         if (submissionSetResponse.notCreated?.submission) {
           const error = submissionSetResponse.notCreated.submission;
           logger.error({ error, draftId }, 'EmailSubmission/set notCreated in send_draft');
@@ -1466,7 +1342,7 @@ export function registerEmailOperationTools(
           content: [
             {
               type: 'text' as const,
-              text: `Error sending draft: ${error instanceof Error ? error.message : String(error)}`,
+              text: `Error sending draft: ${errorText(error)}`,
             },
           ],
         };

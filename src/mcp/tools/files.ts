@@ -5,6 +5,7 @@
 import { mkdir, readFile, realpath, stat } from 'fs/promises';
 import { homedir } from 'os';
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'path';
+import { uploadBlob, type JmapClient } from '../../jmap/client.js';
 
 /** A configured folder: `~` is the home folder; ~/Downloads by default. */
 export function localFolder(dir: string | undefined): string {
@@ -129,7 +130,7 @@ export const promptFiles = (files: LocalFile[]) => files.map((f) => ({ name: f.s
 
 /** Uploads each file and returns the attachments to put in Email/set. */
 export async function uploadFiles(
-  jmap: { uploadBlob(data: Uint8Array, type: string): Promise<{ blobId: string }> },
+  jmap: JmapClient,
   files: LocalFile[]
 ): Promise<Array<{ blobId: string; type: string; name: string; disposition: 'attachment' }>> {
   const attachments = [];
@@ -143,7 +144,7 @@ export async function uploadFiles(
     if (real !== f.path || s.size !== f.size || s.mtimeMs !== f.mtimeMs) throw changed;
     const data = await readFile(real);
     if (data.byteLength !== f.size) throw changed;
-    const blob = await jmap.uploadBlob(data, f.type);
+    const blob = await uploadBlob(jmap, data, f.type);
     attachments.push({ blobId: blob.blobId, type: f.type, name: f.name, disposition: 'attachment' as const });
   }
   return attachments;

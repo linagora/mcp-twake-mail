@@ -9,7 +9,7 @@ vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
 
 import { registerReplyDraftTool } from '../../../../src/mcp/tools/reply-draft.js';
 import { setApprover } from '../../../../src/mcp/approval.js';
-import type { JMAPClient } from '../../../../src/jmap/client.js';
+import { fakeJmap, type FakeJmap } from '../../../../src/jmap/__tests__/fake-jmap.js';
 import type { Logger } from '../../../../src/config/logger.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
@@ -31,22 +31,22 @@ const ORIGINAL = {
 
 describe('reply_draft', () => {
   let server: McpServer;
-  let jmap: JMAPClient;
+  let jmap: FakeJmap;
   let handlers: Map<string, { config: { annotations: Record<string, boolean> }; handler: Handler }>;
   const logger = { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() } as unknown as Logger;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     handlers = new Map();
     server = {
       registerTool: vi.fn((name: string, config: never, handler: Handler) => handlers.set(name, { config, handler })),
     } as unknown as McpServer;
     // these tests script every JMAP call: the client confirms (prompts are tested in tests/unit/mcp/approval.test.ts)
     setApprover(server, { mode: 'client', language: 'fr', timeoutMs: 1000, timeZone: 'Europe/Paris' });
-    jmap = { getSession: vi.fn().mockReturnValue({ accountId: 'acc' }), request: vi.fn(), parseMethodResponse: vi.fn() } as unknown as JMAPClient;
+    jmap = await fakeJmap({ accountId: 'acc' });
   });
 
   function jmapAnswering(original: Record<string, unknown> | null) {
-    vi.mocked(jmap.request).mockImplementation(async (calls: any) => ({
+    jmap.request.mockImplementation(async (calls: any) => ({
       methodResponses: calls.map(([m, , id]: any) =>
         m === 'Mailbox/get'
           ? [m, { list: [{ id: 'mb-drafts', role: 'drafts' }] }, id]
@@ -57,12 +57,11 @@ describe('reply_draft', () => {
               : [m, { created: { draft: { id: 'd1', threadId: 't9' } } }, id]
       ),
     }));
-    vi.mocked(jmap.parseMethodResponse).mockImplementation((r: any) => ({ success: true, data: r[1] }));
   }
-  const setCalls = () => vi.mocked(jmap.request).mock.calls.map((c) => (c[0] as any)[0]).filter(([m]: any) => m === 'Email/set');
+  const setCalls = () => jmap.request.mock.calls.map((c) => (c[0] as any)[0]).filter(([m]: any) => m === 'Email/set');
   const created = () => setCalls()[0][1].create.draft;
   const tool = () => {
-    registerReplyDraftTool(server, jmap, logger, { text: 'Alice', html: '<p>Alice</p>' });
+    registerReplyDraftTool(server, jmap.client, logger, { text: 'Alice', html: '<p>Alice</p>' });
     return handlers.get('reply_draft')!;
   };
 
@@ -148,14 +147,14 @@ describe('reply_draft', () => {
   it('attaches files from the upload folder, and refuses one outside it', async () => {
     const base = mkdtempSync(join(tmpdir(), 'reply-files-'));
     writeFileSync(join(base, 'devis.pdf'), 'pdf');
-    (jmap as any).uploadBlob = vi.fn(async () => ({ blobId: 'blob-1' }));
+    jmap.upload.mockReturnValue({ accountId: 'acc', blobId: 'blob-1', type: 'application/pdf', size: 3 });
     jmapAnswering(ORIGINAL);
-    registerReplyDraftTool(server, jmap, logger, undefined, { uploadDir: base });
+    registerReplyDraftTool(server, jmap.client, logger, undefined, { uploadDir: base });
     const handler = handlers.get('reply_draft')!.handler;
 
     const refused = await handler({ originalEmailId: 'e1', body: 'Ci-joint.', attachments: ['../etc/passwd'] });
     expect(refused.isError).toBe(true);
-    expect((jmap as any).uploadBlob).not.toHaveBeenCalled();
+    expect(jmap.upload).not.toHaveBeenCalled();
 
     await handler({ originalEmailId: 'e1', body: 'Ci-joint.', attachments: ['devis.pdf'] });
     expect(created().attachments).toEqual([{ blobId: 'blob-1', type: 'application/pdf', name: 'devis.pdf', disposition: 'attachment' }]);

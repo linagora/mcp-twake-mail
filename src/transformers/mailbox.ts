@@ -1,39 +1,15 @@
 /**
  * Mailbox transformer - converts JMAP Mailbox objects to SimplifiedMailbox DTOs.
  */
+import type { Mailbox, MailboxRights as JMAPMailboxRights } from '@linagora/jmap-client-ts';
 import type { SimplifiedMailbox, MailboxRole, MailboxRights } from '../types/dto.js';
 
 /**
- * JMAP Mailbox rights structure (from RFC 8621).
+ * The JMAP Mailbox properties needed for transformation (thread counts, rights and subscription
+ * are optional: they are not always requested).
  */
-interface JMAPMailboxRights {
-  mayReadItems: boolean;
-  mayAddItems: boolean;
-  mayRemoveItems: boolean;
-  maySetSeen: boolean;
-  maySetKeywords: boolean;
-  mayCreateChild: boolean;
-  mayRename: boolean;
-  mayDelete: boolean;
-  maySubmit: boolean;
-}
-
-/**
- * JMAP Mailbox object structure (subset needed for transformation).
- */
-interface JMAPMailbox {
-  id: string;
-  name: string;
-  role: string | null;
-  totalEmails: number;
-  unreadEmails: number;
-  sortOrder: number;
-  parentId: string | null;
-  totalThreads?: number;
-  unreadThreads?: number;
-  myRights?: JMAPMailboxRights;
-  isSubscribed?: boolean;
-}
+type JMAPMailbox = Pick<Mailbox, 'id' | 'name' | 'role' | 'totalEmails' | 'unreadEmails' | 'sortOrder' | 'parentId'> &
+  Partial<Pick<Mailbox, 'totalThreads' | 'unreadThreads' | 'myRights' | 'isSubscribed'>>;
 
 /**
  * Validate and type-cast role to MailboxRole.

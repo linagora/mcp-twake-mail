@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { registerBatchOperationTools } from './batch-operations.js';
-import type { JMAPClient } from '../../jmap/client.js';
+import { fakeJmap, type FakeJmap } from '../../jmap/__tests__/fake-jmap.js';
 import type { Logger } from '../../config/logger.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { setApprover } from '../approval.js';
@@ -17,11 +17,11 @@ type ToolHandler = (args: Record<string, unknown>) => Promise<{
 
 describe('registerBatchOperationTools', () => {
   let mockServer: McpServer;
-  let mockJmapClient: JMAPClient;
+  let jmap: FakeJmap;
   let mockLogger: Logger;
   let registeredTools: Map<string, ToolHandler>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     registeredTools = new Map();
 
     // Mock MCP server
@@ -31,12 +31,8 @@ describe('registerBatchOperationTools', () => {
       }),
     } as unknown as McpServer;
 
-    // Mock JMAP client
-    mockJmapClient = {
-      getSession: vi.fn(() => ({ accountId: 'account-1', apiUrl: 'https://jmap.example.com/api' })),
-      request: vi.fn(),
-      parseMethodResponse: vi.fn(),
-    } as unknown as JMAPClient;
+    // Fake JMAP server
+    jmap = await fakeJmap();
 
     // Mock logger (silent)
     mockLogger = {
@@ -48,12 +44,12 @@ describe('registerBatchOperationTools', () => {
 
     // Register all tools
     setApprover(mockServer, { mode: 'client', language: 'en', timeoutMs: 1000 });
-    registerBatchOperationTools(mockServer, mockJmapClient, mockLogger);
+    registerBatchOperationTools(mockServer, jmap.client, mockLogger);
   });
 
   describe('batch_mark_read', () => {
     it('returns success when all emails are marked as read', async () => {
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           [
             'Email/set',
@@ -64,13 +60,6 @@ describe('registerBatchOperationTools', () => {
             'batchMarkRead',
           ],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: {
-          accountId: 'account-1',
-          updated: { 'email-1': null, 'email-2': null, 'email-3': null },
-        },
       });
 
       const handler = registeredTools.get('batch_mark_read')!;
@@ -91,7 +80,7 @@ describe('registerBatchOperationTools', () => {
     });
 
     it('handles partial failure with per-email reporting', async () => {
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           [
             'Email/set',
@@ -103,14 +92,6 @@ describe('registerBatchOperationTools', () => {
             'batchMarkRead',
           ],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: {
-          accountId: 'account-1',
-          updated: { 'email-1': null, 'email-3': null },
-          notUpdated: { 'email-2': { type: 'notFound', description: 'Email not found' } },
-        },
       });
 
       const handler = registeredTools.get('batch_mark_read')!;
@@ -131,7 +112,7 @@ describe('registerBatchOperationTools', () => {
     });
 
     it('handles total failure with all emails in notUpdated', async () => {
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           [
             'Email/set',
@@ -146,16 +127,6 @@ describe('registerBatchOperationTools', () => {
           ],
         ],
       });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: {
-          accountId: 'account-1',
-          notUpdated: {
-            'email-1': { type: 'notFound' },
-            'email-2': { type: 'notFound' },
-          },
-        },
-      });
 
       const handler = registeredTools.get('batch_mark_read')!;
       const result = await handler({ emailIds: ['email-1', 'email-2'] });
@@ -169,14 +140,10 @@ describe('registerBatchOperationTools', () => {
     });
 
     it('returns error when JMAP method fails', async () => {
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           ['error', { type: 'serverFail', description: 'Server error' }, 'batchMarkRead'],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: false,
-        error: { type: 'serverFail', description: 'Server error' },
       });
 
       const handler = registeredTools.get('batch_mark_read')!;
@@ -189,7 +156,7 @@ describe('registerBatchOperationTools', () => {
 
   describe('batch_mark_unread', () => {
     it('returns success when all emails are marked as unread', async () => {
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           [
             'Email/set',
@@ -200,13 +167,6 @@ describe('registerBatchOperationTools', () => {
             'batchMarkUnread',
           ],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: {
-          accountId: 'account-1',
-          updated: { 'email-1': null, 'email-2': null },
-        },
       });
 
       const handler = registeredTools.get('batch_mark_unread')!;
@@ -227,7 +187,7 @@ describe('registerBatchOperationTools', () => {
     });
 
     it('handles partial failure', async () => {
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           [
             'Email/set',
@@ -239,14 +199,6 @@ describe('registerBatchOperationTools', () => {
             'batchMarkUnread',
           ],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: {
-          accountId: 'account-1',
-          updated: { 'email-1': null },
-          notUpdated: { 'email-2': { type: 'invalidProperties' } },
-        },
       });
 
       const handler = registeredTools.get('batch_mark_unread')!;
@@ -261,14 +213,10 @@ describe('registerBatchOperationTools', () => {
     });
 
     it('returns error when JMAP method fails', async () => {
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           ['error', { type: 'serverFail' }, 'batchMarkUnread'],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: false,
-        error: { type: 'serverFail' },
       });
 
       const handler = registeredTools.get('batch_mark_unread')!;
@@ -281,7 +229,7 @@ describe('registerBatchOperationTools', () => {
 
   describe('batch_move', () => {
     it('returns success when all emails are moved', async () => {
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           [
             'Email/set',
@@ -292,13 +240,6 @@ describe('registerBatchOperationTools', () => {
             'batchMove',
           ],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: {
-          accountId: 'account-1',
-          updated: { 'email-1': null, 'email-2': null, 'email-3': null },
-        },
       });
 
       const handler = registeredTools.get('batch_move')!;
@@ -323,7 +264,7 @@ describe('registerBatchOperationTools', () => {
     });
 
     it('handles partial failure with some emails not found', async () => {
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           [
             'Email/set',
@@ -338,17 +279,6 @@ describe('registerBatchOperationTools', () => {
             'batchMove',
           ],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: {
-          accountId: 'account-1',
-          updated: { 'email-1': null },
-          notUpdated: {
-            'email-2': { type: 'notFound', description: 'Email not found' },
-            'email-3': { type: 'notFound', description: 'Email not found' },
-          },
-        },
       });
 
       const handler = registeredTools.get('batch_move')!;
@@ -368,21 +298,17 @@ describe('registerBatchOperationTools', () => {
     });
 
     it('includes targetMailboxId in request', async () => {
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           ['Email/set', { accountId: 'account-1', updated: { 'email-1': null } }, 'batchMove'],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: { accountId: 'account-1', updated: { 'email-1': null } },
       });
 
       const handler = registeredTools.get('batch_move')!;
       await handler({ emailIds: ['email-1'], targetMailboxId: 'target-123' });
 
       // Verify the request was made with correct mailboxIds structure
-      expect(mockJmapClient.request).toHaveBeenCalledWith([
+      expect(jmap.calls()).toEqual([
         [
           'Email/set',
           {
@@ -391,20 +317,16 @@ describe('registerBatchOperationTools', () => {
               'email-1': { mailboxIds: { 'target-123': true } },
             },
           },
-          'batchMove',
+          'c0',
         ],
       ]);
     });
 
     it('returns error when JMAP method fails', async () => {
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           ['error', { type: 'invalidArguments', description: 'Invalid mailbox ID' }, 'batchMove'],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: false,
-        error: { type: 'invalidArguments', description: 'Invalid mailbox ID' },
       });
 
       const handler = registeredTools.get('batch_move')!;
@@ -420,7 +342,7 @@ describe('registerBatchOperationTools', () => {
 
   describe('batch_delete', () => {
     it('returns success when all emails are permanently deleted', async () => {
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           [
             'Email/set',
@@ -431,13 +353,6 @@ describe('registerBatchOperationTools', () => {
             'batchDestroy',
           ],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: {
-          accountId: 'account-1',
-          destroyed: ['email-1', 'email-2', 'email-3'],
-        },
       });
 
       const handler = registeredTools.get('batch_delete')!;
@@ -459,7 +374,7 @@ describe('registerBatchOperationTools', () => {
     });
 
     it('handles partial failure with some emails not destroyed', async () => {
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           [
             'Email/set',
@@ -473,16 +388,6 @@ describe('registerBatchOperationTools', () => {
             'batchDestroy',
           ],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: {
-          accountId: 'account-1',
-          destroyed: ['email-1'],
-          notDestroyed: {
-            'email-2': { type: 'notFound', description: 'Email not found' },
-          },
-        },
       });
 
       const handler = registeredTools.get('batch_delete')!;
@@ -500,7 +405,7 @@ describe('registerBatchOperationTools', () => {
     it('moves emails to Trash when permanent=false', async () => {
       // First call: Mailbox/query to find Trash
       // Second call: Email/set to move to Trash
-      vi.mocked(mockJmapClient.request)
+      jmap.request
         .mockResolvedValueOnce({
           methodResponses: [
             ['Mailbox/query', { ids: ['trash-mailbox-id'] }, 'findTrash'],
@@ -518,18 +423,6 @@ describe('registerBatchOperationTools', () => {
             ],
           ],
         });
-      vi.mocked(mockJmapClient.parseMethodResponse)
-        .mockReturnValueOnce({
-          success: true,
-          data: { ids: ['trash-mailbox-id'] },
-        })
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            accountId: 'account-1',
-            updated: { 'email-1': null, 'email-2': null },
-          },
-        });
 
       const handler = registeredTools.get('batch_delete')!;
       const result = await handler({ emailIds: ['email-1', 'email-2'], permanent: false });
@@ -544,7 +437,7 @@ describe('registerBatchOperationTools', () => {
     it('falls back to permanent delete when no Trash mailbox exists', async () => {
       // First call: Mailbox/query returns empty
       // Second call: Email/set with destroy
-      vi.mocked(mockJmapClient.request)
+      jmap.request
         .mockResolvedValueOnce({
           methodResponses: [
             ['Mailbox/query', { ids: [] }, 'findTrash'],
@@ -562,18 +455,6 @@ describe('registerBatchOperationTools', () => {
             ],
           ],
         });
-      vi.mocked(mockJmapClient.parseMethodResponse)
-        .mockReturnValueOnce({
-          success: true,
-          data: { ids: [] },
-        })
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            accountId: 'account-1',
-            destroyed: ['email-1', 'email-2'],
-          },
-        });
 
       const handler = registeredTools.get('batch_delete')!;
       const result = await handler({ emailIds: ['email-1', 'email-2'], permanent: false });
@@ -586,7 +467,7 @@ describe('registerBatchOperationTools', () => {
     });
 
     it('queries Trash mailbox only once for batch operation', async () => {
-      vi.mocked(mockJmapClient.request)
+      jmap.request
         .mockResolvedValueOnce({
           methodResponses: [
             ['Mailbox/query', { ids: ['trash-mailbox-id'] }, 'findTrash'],
@@ -604,35 +485,19 @@ describe('registerBatchOperationTools', () => {
             ],
           ],
         });
-      vi.mocked(mockJmapClient.parseMethodResponse)
-        .mockReturnValueOnce({
-          success: true,
-          data: { ids: ['trash-mailbox-id'] },
-        })
-        .mockReturnValueOnce({
-          success: true,
-          data: {
-            accountId: 'account-1',
-            updated: { 'email-1': null, 'email-2': null, 'email-3': null },
-          },
-        });
 
       const handler = registeredTools.get('batch_delete')!;
       await handler({ emailIds: ['email-1', 'email-2', 'email-3'], permanent: false });
 
       // Exactly 2 requests: 1 for Trash query, 1 for Email/set
-      expect(mockJmapClient.request).toHaveBeenCalledTimes(2);
+      expect(jmap.request).toHaveBeenCalledTimes(2);
     });
 
     it('returns error when JMAP method fails', async () => {
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           ['error', { type: 'serverFail', description: 'Server error' }, 'batchDestroy'],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: false,
-        error: { type: 'serverFail', description: 'Server error' },
       });
 
       const handler = registeredTools.get('batch_delete')!;
@@ -645,7 +510,7 @@ describe('registerBatchOperationTools', () => {
 
   describe('batch_add_label', () => {
     it('returns success when label is added to all emails', async () => {
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           [
             'Email/set',
@@ -656,13 +521,6 @@ describe('registerBatchOperationTools', () => {
             'batchAddLabel',
           ],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: {
-          accountId: 'account-1',
-          updated: { 'email-1': null, 'email-2': null, 'email-3': null },
-        },
       });
 
       const handler = registeredTools.get('batch_add_label')!;
@@ -687,7 +545,7 @@ describe('registerBatchOperationTools', () => {
     });
 
     it('handles partial failure with some emails not found', async () => {
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           [
             'Email/set',
@@ -701,16 +559,6 @@ describe('registerBatchOperationTools', () => {
             'batchAddLabel',
           ],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: {
-          accountId: 'account-1',
-          updated: { 'email-1': null },
-          notUpdated: {
-            'email-2': { type: 'notFound', description: 'Email not found' },
-          },
-        },
       });
 
       const handler = registeredTools.get('batch_add_label')!;
@@ -728,21 +576,17 @@ describe('registerBatchOperationTools', () => {
     });
 
     it('uses correct path syntax for mailboxId', async () => {
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           ['Email/set', { accountId: 'account-1', updated: { 'email-1': null } }, 'batchAddLabel'],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: { accountId: 'account-1', updated: { 'email-1': null } },
       });
 
       const handler = registeredTools.get('batch_add_label')!;
       await handler({ emailIds: ['email-1'], mailboxId: 'label-xyz' });
 
       // Verify path syntax: mailboxIds/[mailboxId]
-      expect(mockJmapClient.request).toHaveBeenCalledWith([
+      expect(jmap.calls()).toEqual([
         [
           'Email/set',
           {
@@ -751,20 +595,16 @@ describe('registerBatchOperationTools', () => {
               'email-1': { 'mailboxIds/label-xyz': true },
             },
           },
-          'batchAddLabel',
+          'c0',
         ],
       ]);
     });
 
     it('returns error when JMAP method fails', async () => {
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           ['error', { type: 'invalidArguments', description: 'Invalid mailbox' }, 'batchAddLabel'],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: false,
-        error: { type: 'invalidArguments', description: 'Invalid mailbox' },
       });
 
       const handler = registeredTools.get('batch_add_label')!;
@@ -777,7 +617,7 @@ describe('registerBatchOperationTools', () => {
 
   describe('batch_remove_label', () => {
     it('returns success when label is removed from all emails', async () => {
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           [
             'Email/set',
@@ -788,13 +628,6 @@ describe('registerBatchOperationTools', () => {
             'batchRemoveLabel',
           ],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: {
-          accountId: 'account-1',
-          updated: { 'email-1': null, 'email-2': null },
-        },
       });
 
       const handler = registeredTools.get('batch_remove_label')!;
@@ -819,7 +652,7 @@ describe('registerBatchOperationTools', () => {
     });
 
     it('handles partial failure', async () => {
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           [
             'Email/set',
@@ -833,16 +666,6 @@ describe('registerBatchOperationTools', () => {
             'batchRemoveLabel',
           ],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: {
-          accountId: 'account-1',
-          updated: { 'email-1': null },
-          notUpdated: {
-            'email-2': { type: 'invalidProperties', description: 'Cannot remove last mailbox' },
-          },
-        },
       });
 
       const handler = registeredTools.get('batch_remove_label')!;
@@ -860,21 +683,17 @@ describe('registerBatchOperationTools', () => {
     });
 
     it('uses correct path syntax for mailboxId removal', async () => {
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           ['Email/set', { accountId: 'account-1', updated: { 'email-1': null } }, 'batchRemoveLabel'],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: { accountId: 'account-1', updated: { 'email-1': null } },
       });
 
       const handler = registeredTools.get('batch_remove_label')!;
       await handler({ emailIds: ['email-1'], mailboxId: 'label-xyz' });
 
       // Verify path syntax with null value: mailboxIds/[mailboxId]: null
-      expect(mockJmapClient.request).toHaveBeenCalledWith([
+      expect(jmap.calls()).toEqual([
         [
           'Email/set',
           {
@@ -883,20 +702,16 @@ describe('registerBatchOperationTools', () => {
               'email-1': { 'mailboxIds/label-xyz': null },
             },
           },
-          'batchRemoveLabel',
+          'c0',
         ],
       ]);
     });
 
     it('returns error when JMAP method fails', async () => {
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           ['error', { type: 'serverFail' }, 'batchRemoveLabel'],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: false,
-        error: { type: 'serverFail' },
       });
 
       const handler = registeredTools.get('batch_remove_label')!;
@@ -921,7 +736,7 @@ describe('registerBatchOperationTools', () => {
 
   describe('error handling', () => {
     it('handles exceptions in batch_mark_read', async () => {
-      vi.mocked(mockJmapClient.request).mockRejectedValue(new Error('Network error'));
+      jmap.request.mockRejectedValue(new Error('Network error'));
 
       const handler = registeredTools.get('batch_mark_read')!;
       const result = await handler({ emailIds: ['email-1'] });
@@ -932,7 +747,7 @@ describe('registerBatchOperationTools', () => {
     });
 
     it('handles exceptions in batch_mark_unread', async () => {
-      vi.mocked(mockJmapClient.request).mockRejectedValue(new Error('Connection failed'));
+      jmap.request.mockRejectedValue(new Error('Connection failed'));
 
       const handler = registeredTools.get('batch_mark_unread')!;
       const result = await handler({ emailIds: ['email-1'] });
@@ -942,7 +757,7 @@ describe('registerBatchOperationTools', () => {
     });
 
     it('handles exceptions in batch_move', async () => {
-      vi.mocked(mockJmapClient.request).mockRejectedValue(new Error('Timeout'));
+      jmap.request.mockRejectedValue(new Error('Timeout'));
 
       const handler = registeredTools.get('batch_move')!;
       const result = await handler({ emailIds: ['email-1'], targetMailboxId: 'mailbox-1' });
@@ -952,7 +767,7 @@ describe('registerBatchOperationTools', () => {
     });
 
     it('handles exceptions in batch_delete', async () => {
-      vi.mocked(mockJmapClient.request).mockRejectedValue(new Error('Connection reset'));
+      jmap.request.mockRejectedValue(new Error('Connection reset'));
 
       const handler = registeredTools.get('batch_delete')!;
       const result = await handler({ emailIds: ['email-1'], permanent: true });
@@ -963,7 +778,7 @@ describe('registerBatchOperationTools', () => {
     });
 
     it('handles exceptions in batch_add_label', async () => {
-      vi.mocked(mockJmapClient.request).mockRejectedValue(new Error('Service unavailable'));
+      jmap.request.mockRejectedValue(new Error('Service unavailable'));
 
       const handler = registeredTools.get('batch_add_label')!;
       const result = await handler({ emailIds: ['email-1'], mailboxId: 'label-1' });
@@ -973,7 +788,7 @@ describe('registerBatchOperationTools', () => {
     });
 
     it('handles exceptions in batch_remove_label', async () => {
-      vi.mocked(mockJmapClient.request).mockRejectedValue(new Error('Gateway timeout'));
+      jmap.request.mockRejectedValue(new Error('Gateway timeout'));
 
       const handler = registeredTools.get('batch_remove_label')!;
       const result = await handler({ emailIds: ['email-1'], mailboxId: 'label-1' });

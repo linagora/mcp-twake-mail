@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fakeJmap } from '../../jmap/__tests__/fake-jmap.js';
 import { contentType, draftFiles, humanSize, localFiles, promptFiles, uploadFiles, uploadFolder } from './files.js';
 import { homedir } from 'node:os';
 import { existsSync } from 'node:fs';
@@ -101,8 +102,26 @@ describe('uploadFiles', () => {
     writeFileSync(join(base, 'devis.pdf'), 'pdf');
     const files = await localFiles(base, ['devis.pdf']);
     writeFileSync(join(base, 'devis.pdf'), 'a much longer content');
-    const jmap = { uploadBlob: async () => ({ blobId: 'b' }) };
-    await expect(uploadFiles(jmap, files)).rejects.toThrow(/devis\.pdf changed since it was checked/);
+    const jmap = await fakeJmap();
+    await expect(uploadFiles(jmap.client, files)).rejects.toThrow(/devis\.pdf changed since it was checked/);
+    expect(jmap.upload).not.toHaveBeenCalled();
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  it('uploads each file and returns its attachment', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'mail-upload-'));
+    writeFileSync(join(base, 'devis.pdf'), 'pdf');
+    const files = await localFiles(base, ['devis.pdf']);
+    const jmap = await fakeJmap();
+    jmap.upload.mockReturnValueOnce({ accountId: 'account-1', blobId: 'blob-7', type: 'application/pdf', size: 3 });
+
+    const attachments = await uploadFiles(jmap.client, files);
+
+    expect(attachments).toEqual([{ blobId: 'blob-7', type: 'application/pdf', name: 'devis.pdf', disposition: 'attachment' }]);
+    const [body, type, url] = jmap.upload.mock.calls[0];
+    expect(new TextDecoder().decode(body)).toBe('pdf');
+    expect(type).toBe('application/pdf');
+    expect(url).toBe('https://jmap.example.com/upload/account-1');
     rmSync(base, { recursive: true, force: true });
   });
 });
