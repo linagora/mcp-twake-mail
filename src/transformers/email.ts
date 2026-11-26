@@ -2,70 +2,31 @@
  * Email transformer - converts JMAP Email objects to SimplifiedEmail DTOs.
  * Implements TRANS-03: keyword to boolean flag conversion.
  */
+import type { Email, EmailAddress as JMAPEmailAddress, EmailBodyPart } from '@linagora/jmap-client-ts';
 import type { SimplifiedEmail, EmailAddress, SimplifiedAttachment } from '../types/dto.js';
 
-/**
- * JMAP Email address structure (from RFC 8621).
- */
-interface JMAPEmailAddress {
-  name: string | null;
-  email: string;
-}
+/** A body part reference (textBody or htmlBody): only its partId and type are read. */
+type JMAPBodyPart = Pick<EmailBodyPart, 'partId' | 'type'>;
+
+/** An attachment part, as requested with bodyProperties. */
+type JMAPAttachment = Pick<EmailBodyPart, 'blobId' | 'type' | 'name' | 'size'>;
 
 /**
- * JMAP Attachment structure.
+ * The JMAP Email properties needed for transformation. mailboxIds and keywords are read as
+ * booleans; the other properties are optional, as not every call requests them.
  */
-interface JMAPAttachment {
-  blobId: string;
-  type: string;
-  name: string | null;
-  size: number;
-}
-
-/**
- * JMAP body part reference.
- */
-interface JMAPBodyPart {
-  partId: string;
-  type: string;
-}
-
-/**
- * JMAP body value.
- */
-interface JMAPBodyValue {
-  value: string;
-  isEncodingProblem: boolean;
-  isTruncated: boolean;
-}
-
-/**
- * JMAP Email object structure (subset needed for transformation).
- */
-interface JMAPEmail {
-  id: string;
-  blobId: string;
-  threadId: string;
+type JMAPEmail = Pick<Email, 'id' | 'blobId' | 'threadId' | 'receivedAt' | 'subject'> & {
   mailboxIds: Record<string, boolean>;
   keywords?: Record<string, boolean>;
-  receivedAt: string;
-  subject: string | null;
-  from: JMAPEmailAddress[];
-  to: JMAPEmailAddress[];
-  cc?: JMAPEmailAddress[];
-  bcc?: JMAPEmailAddress[];
-  replyTo?: JMAPEmailAddress[];
-  preview?: string;
-  size?: number;
-  hasAttachment?: boolean;
-  textBody?: JMAPBodyPart[];
-  htmlBody?: JMAPBodyPart[];
-  bodyValues?: Record<string, JMAPBodyValue>;
-  attachments?: JMAPAttachment[];
-  messageId?: string[] | null;
-  inReplyTo?: string[] | null;
-  references?: string[] | null;
-}
+  from: JMAPEmailAddress[] | null;
+  to: JMAPEmailAddress[] | null;
+} & Partial<
+    Pick<Email, 'cc' | 'bcc' | 'replyTo' | 'preview' | 'size' | 'hasAttachment' | 'bodyValues' | 'messageId' | 'inReplyTo' | 'references'>
+  > & {
+    textBody?: JMAPBodyPart[];
+    htmlBody?: JMAPBodyPart[];
+    attachments?: JMAPAttachment[];
+  };
 
 /**
  * Convert JMAP mailboxIds object to string array.
@@ -94,7 +55,7 @@ function hasKeyword(keywords: Record<string, boolean> | undefined, keyword: stri
  * @param addresses JMAP email addresses
  * @returns EmailAddress array
  */
-function transformAddresses(addresses: JMAPEmailAddress[] | undefined): EmailAddress[] {
+function transformAddresses(addresses: JMAPEmailAddress[] | null | undefined): EmailAddress[] {
   if (!addresses) {
     return [];
   }
@@ -112,14 +73,14 @@ function transformAddresses(addresses: JMAPEmailAddress[] | undefined): EmailAdd
  */
 function extractBodyContent(
   bodyParts: JMAPBodyPart[] | undefined,
-  bodyValues: Record<string, JMAPBodyValue> | undefined
+  bodyValues: Email['bodyValues'] | undefined
 ): string | undefined {
   if (!bodyParts || !bodyValues || bodyParts.length === 0) {
     return undefined;
   }
   // Use first body part
   const firstPart = bodyParts[0];
-  const value = bodyValues[firstPart.partId];
+  const value = firstPart.partId === null ? undefined : bodyValues[firstPart.partId];
   return value?.value;
 }
 
@@ -135,7 +96,8 @@ function transformAttachments(
     return undefined;
   }
   return attachments.map((att) => ({
-    blobId: att.blobId,
+    // an attachment is a leaf part: it always has a blob
+    blobId: att.blobId as string,
     type: att.type,
     name: att.name,
     size: att.size,

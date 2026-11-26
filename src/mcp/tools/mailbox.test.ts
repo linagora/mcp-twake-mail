@@ -3,7 +3,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { registerMailboxTools } from './mailbox.js';
-import type { JMAPClient } from '../../jmap/client.js';
+import { fakeJmap, type FakeJmap } from '../../jmap/__tests__/fake-jmap.js';
 import type { Logger } from '../../config/logger.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { setApprover } from '../approval.js';
@@ -16,11 +16,11 @@ type ToolHandler = (args: Record<string, unknown>) => Promise<{
 
 describe('registerMailboxTools', () => {
   let mockServer: McpServer;
-  let mockJmapClient: JMAPClient;
+  let jmap: FakeJmap;
   let mockLogger: Logger;
   let registeredTools: Map<string, ToolHandler>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     registeredTools = new Map();
 
     // Mock MCP server - uses .tool() method
@@ -30,12 +30,8 @@ describe('registerMailboxTools', () => {
       }),
     } as unknown as McpServer;
 
-    // Mock JMAP client
-    mockJmapClient = {
-      getSession: vi.fn(() => ({ accountId: 'account-1', apiUrl: 'https://jmap.example.com/api' })),
-      request: vi.fn(),
-      parseMethodResponse: vi.fn(),
-    } as unknown as JMAPClient;
+    // Fake JMAP server
+    jmap = await fakeJmap();
 
     // Mock logger (silent)
     mockLogger = {
@@ -47,7 +43,7 @@ describe('registerMailboxTools', () => {
 
     // Register all tools
     setApprover(mockServer, { mode: 'client', language: 'en', timeoutMs: 1000 });
-    registerMailboxTools(mockServer, mockJmapClient, mockLogger);
+    registerMailboxTools(mockServer, jmap.client, mockLogger);
   });
 
   describe('get_mailbox', () => {
@@ -62,14 +58,10 @@ describe('registerMailboxTools', () => {
         parentId: null,
       };
 
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           ['Mailbox/get', { accountId: 'account-1', list: [mockMailbox], notFound: [] }, 'get-mailbox'],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: { accountId: 'account-1', list: [mockMailbox], notFound: [] },
       });
 
       const handler = registeredTools.get('get_mailbox')!;
@@ -85,14 +77,10 @@ describe('registerMailboxTools', () => {
     });
 
     it('returns error when mailbox not found in notFound array', async () => {
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           ['Mailbox/get', { accountId: 'account-1', list: [], notFound: ['mailbox-nonexistent'] }, 'get-mailbox'],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: { accountId: 'account-1', list: [], notFound: ['mailbox-nonexistent'] },
       });
 
       const handler = registeredTools.get('get_mailbox')!;
@@ -103,14 +91,10 @@ describe('registerMailboxTools', () => {
     });
 
     it('returns error when mailbox list is empty', async () => {
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           ['Mailbox/get', { accountId: 'account-1', list: [], notFound: [] }, 'get-mailbox'],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: { accountId: 'account-1', list: [], notFound: [] },
       });
 
       const handler = registeredTools.get('get_mailbox')!;
@@ -121,14 +105,10 @@ describe('registerMailboxTools', () => {
     });
 
     it('returns error on JMAP error', async () => {
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           ['error', { type: 'serverError', description: 'Internal server error' }, 'get-mailbox'],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: false,
-        error: { type: 'serverError', description: 'Internal server error' },
       });
 
       const handler = registeredTools.get('get_mailbox')!;
@@ -140,7 +120,7 @@ describe('registerMailboxTools', () => {
     });
 
     it('handles exception gracefully', async () => {
-      vi.mocked(mockJmapClient.request).mockRejectedValue(new Error('Network error'));
+      jmap.request.mockRejectedValue(new Error('Network error'));
 
       const handler = registeredTools.get('get_mailbox')!;
       const result = await handler({ mailboxId: 'mailbox-1' });
@@ -159,8 +139,7 @@ describe('registerMailboxTools', () => {
         { id: 'c', name: 'Unknown', role: null, totalEmails: 1, unreadEmails: 0, sortOrder: 3, parentId: null },
       ];
       const list = async (role: string) => {
-        vi.mocked(mockJmapClient.request).mockResolvedValue({ methodResponses: [['Mailbox/get', { list: boxes }, 'list-mailboxes']] });
-        vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({ success: true, data: { list: boxes } });
+        jmap.request.mockResolvedValue({ methodResponses: [['Mailbox/get', { list: boxes }, 'list-mailboxes']] });
         const result = await registeredTools.get('list_mailboxes')!({ role });
         return JSON.parse(result.content[0].text).map((m: { id: string }) => m.id);
       };
@@ -181,14 +160,10 @@ describe('registerMailboxTools', () => {
         { id: 'custom', name: 'Custom Folder', role: null, totalEmails: 20, unreadEmails: 5, sortOrder: 100, parentId: null },
       ];
 
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           ['Mailbox/get', { accountId: 'account-1', list: mockMailboxes }, 'list-mailboxes'],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: { accountId: 'account-1', list: mockMailboxes },
       });
 
       const handler = registeredTools.get('list_mailboxes')!;
@@ -206,14 +181,10 @@ describe('registerMailboxTools', () => {
         { id: 'drafts', name: 'Drafts', role: 'drafts', totalEmails: 5, unreadEmails: 0, sortOrder: 3, parentId: null },
       ];
 
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           ['Mailbox/get', { accountId: 'account-1', list: mockMailboxes }, 'list-mailboxes'],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: { accountId: 'account-1', list: mockMailboxes },
       });
 
       const handler = registeredTools.get('list_mailboxes')!;
@@ -230,14 +201,10 @@ describe('registerMailboxTools', () => {
         { id: 'inbox', name: 'Inbox', role: 'inbox', totalEmails: 100, unreadEmails: 10, sortOrder: 1, parentId: null },
       ];
 
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           ['Mailbox/get', { accountId: 'account-1', list: mockMailboxes }, 'list-mailboxes'],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: { accountId: 'account-1', list: mockMailboxes },
       });
 
       const handler = registeredTools.get('list_mailboxes')!;
@@ -249,14 +216,10 @@ describe('registerMailboxTools', () => {
     });
 
     it('returns empty array when list is undefined', async () => {
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           ['Mailbox/get', { accountId: 'account-1' }, 'list-mailboxes'],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: true,
-        data: { accountId: 'account-1' },
       });
 
       const handler = registeredTools.get('list_mailboxes')!;
@@ -268,14 +231,10 @@ describe('registerMailboxTools', () => {
     });
 
     it('returns error on JMAP error', async () => {
-      vi.mocked(mockJmapClient.request).mockResolvedValue({
+      jmap.request.mockResolvedValue({
         methodResponses: [
           ['error', { type: 'serverError', description: 'Internal error' }, 'list-mailboxes'],
         ],
-      });
-      vi.mocked(mockJmapClient.parseMethodResponse).mockReturnValue({
-        success: false,
-        error: { type: 'serverError', description: 'Internal error' },
       });
 
       const handler = registeredTools.get('list_mailboxes')!;
@@ -286,7 +245,7 @@ describe('registerMailboxTools', () => {
     });
 
     it('handles exception gracefully', async () => {
-      vi.mocked(mockJmapClient.request).mockRejectedValue(new Error('Connection timeout'));
+      jmap.request.mockRejectedValue(new Error('Connection timeout'));
 
       const handler = registeredTools.get('list_mailboxes')!;
       const result = await handler({});

@@ -17,7 +17,7 @@ export interface Original {
 }
 
 /** The properties of the original to fetch with Email/get. */
-export const ORIGINAL_PROPERTIES = ['messageId', 'references', 'subject', 'from', 'to', 'cc', 'replyTo', 'sentAt', 'receivedAt'];
+export const ORIGINAL_PROPERTIES = ['messageId', 'references', 'subject', 'from', 'to', 'cc', 'replyTo', 'sentAt', 'receivedAt'] as const;
 
 /** In-Reply-To and References of a reply (RFC 5322 §3.6.4), as JMAP arrays. */
 export function threadingHeaders(o: Original): { inReplyTo: string[]; references: string[] } {

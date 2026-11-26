@@ -7,7 +7,8 @@
  */
 import { randomBytes } from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { JMAPClient } from '../jmap/client.js';
+import { JmapMethodError } from '@linagora/jmap-client-ts';
+import type { JmapClient } from '../jmap/client.js';
 import { humanSize } from './tools/files.js';
 import { BATCH_REF, batchHook, batchMode } from '../batch/index.js';
 
@@ -129,7 +130,7 @@ export function approvalMessage(req: ApprovalRequest, opts: Pick<ApprovalOptions
   return lines.join('\n');
 }
 
-type Address = { name?: string; email: string };
+type Address = { name?: string | null; email: string };
 const addr = (a: Address) => (a.name ? `${a.name} <${a.email}>` : a.email);
 const addrs = (list: unknown) => (Array.isArray(list) && list.length ? (list as Address[]).map(addr).join(', ') : undefined);
 
@@ -203,34 +204,31 @@ export class Approver {
   }
 
   /** A stored e-mail (a draft about to be sent), read back with its text. */
-  async stored(jmap: JMAPClient, id: string): Promise<[Label, string | undefined][]> {
-    const session = jmap.getSession();
-    const res = await jmap.request([
-      [
-        'Email/get',
-        {
-          accountId: session.accountId,
-          ids: [id],
-          properties: ['from', 'to', 'cc', 'bcc', 'subject', 'textBody', 'htmlBody', 'bodyValues', 'attachments'],
-          fetchTextBodyValues: true,
-          fetchHTMLBodyValues: true,
-        },
-        'describe',
-      ],
-    ]);
-    const e = ((res.methodResponses?.[0]?.[1] as { list?: Record<string, unknown>[] })?.list ?? [])[0];
+  async stored(jmap: JmapClient, id: string): Promise<[Label, string | undefined][]> {
+    const res = await jmap
+      .call('Email/get', {
+        accountId: jmap.getPrimaryAccountId(),
+        ids: [id],
+        properties: ['from', 'to', 'cc', 'bcc', 'subject', 'textBody', 'htmlBody', 'bodyValues', 'attachments'],
+        fetchTextBodyValues: true,
+        fetchHTMLBodyValues: true,
+      })
+      .catch((error: unknown) => {
+        // the server refused to read it: the draft is named by its id
+        if (error instanceof JmapMethodError) return null;
+        throw error;
+      });
+    const e = res?.list[0];
     if (!e) return [['draft', id]];
     return this.message(e);
   }
 
   /** "Bob DURAND <bob@…> · 2026-10-30 14:02 · Subject", one line per e-mail (at most 10). */
-  async emails(jmap: JMAPClient, ids: string[]): Promise<string> {
+  async emails(jmap: JmapClient, ids: string[]): Promise<string> {
     const shown = ids.slice(0, 10);
     let lines = shown;
     try {
-      const session = jmap.getSession();
-      const res = await jmap.request([['Email/get', { accountId: session.accountId, ids: shown, properties: ['subject', 'from', 'receivedAt'] }, 'describe']]);
-      const list = ((res.methodResponses?.[0]?.[1] as { list?: { id: string; subject?: string; from?: Address[]; receivedAt?: string }[] })?.list ?? []);
+      const { list } = await jmap.call('Email/get', { accountId: jmap.getPrimaryAccountId(), ids: shown, properties: ['subject', 'from', 'receivedAt'] });
       const byId = new Map(list.map((m) => [m.id, m]));
       lines = shown.map((id) => {
         const m = byId.get(id);
@@ -244,11 +242,9 @@ export class Approver {
   }
 
   /** Folder name (full path when it has parents), else its id. */
-  async mailbox(jmap: JMAPClient, id: string): Promise<string> {
+  async mailbox(jmap: JmapClient, id: string): Promise<string> {
     try {
-      const session = jmap.getSession();
-      const res = await jmap.request([['Mailbox/get', { accountId: session.accountId, properties: ['name', 'parentId'] }, 'describe']]);
-      const list = ((res.methodResponses?.[0]?.[1] as { list?: { id: string; name: string; parentId?: string | null }[] })?.list ?? []);
+      const { list } = await jmap.call('Mailbox/get', { accountId: jmap.getPrimaryAccountId(), properties: ['name', 'parentId'] });
       const byId = new Map(list.map((m) => [m.id, m]));
       const parts: string[] = [];
       for (let m = byId.get(id), n = 0; m && n < 10; m = m.parentId ? byId.get(m.parentId) : undefined, n++) parts.unshift(m.name);

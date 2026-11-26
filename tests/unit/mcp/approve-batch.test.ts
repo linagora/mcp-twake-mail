@@ -9,7 +9,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { registerAllTools } from '../../../src/mcp/tools/index.js';
 import { setApprover, WRITE_TOOLS } from '../../../src/mcp/approval.js';
-import type { JMAPClient } from '../../../src/jmap/client.js';
+import { fakeJmap as fakeJmapServer } from '../../../src/jmap/__tests__/fake-jmap.js';
 import type { Logger } from '../../../src/config/logger.js';
 
 const logger = { debug() {}, info() {}, warn() {}, error() {}, child() { return logger; } } as unknown as Logger;
@@ -42,9 +42,10 @@ const email = (id: string) => ({
 });
 
 /** A fake JMAP server: reads answer, every "/set" call is recorded as a write. */
-function fakeJmap() {
+async function fakeJmap() {
   const writes: string[] = [];
-  const request = vi.fn(async (calls: [string, Record<string, any>, string][]) => ({
+  const server = await fakeJmapServer({ accountId: 'acc', session: { username: 'alice.martin@example.com' } });
+  server.request.mockImplementation(async (calls: [string, Record<string, any>, string][]) => ({
     methodResponses: calls.map(([method, args, id]) => {
       if (method.endsWith('/set')) {
         writes.push(method);
@@ -59,21 +60,17 @@ function fakeJmap() {
       return [method, {}, id];
     }),
   }));
-  const jmap = {
-    getSession: () => ({ accountId: 'acc', apiUrl: 'https://jmap.example.com/api', username: 'alice.martin@example.com' }),
-    request,
-    parseMethodResponse: (r: [string, Record<string, unknown>]) => (r[0] === 'error' ? { success: false, error: { type: String(r[1].type) } } : { success: true, data: r[1] }),
-    downloadBlob: async (blobId: string) => new ArrayBuffer(blobId === 'small' ? 10 : 800 * 1024),
-    uploadBlob: async () => {
-      writes.push('upload');
-      return { blobId: 'uploaded', type: 'application/pdf', size: 3 };
-    },
-  } as unknown as JMAPClient;
-  return { jmap, writes };
+  // download URL: …/download/{accountId}/{blobId}/{name}?type=…
+  server.download.mockImplementation((url: string) => new Uint8Array(new URL(url).pathname.split('/')[3] === 'small' ? 10 : 800 * 1024));
+  server.upload.mockImplementation(() => {
+    writes.push('upload');
+    return { accountId: 'acc', blobId: 'uploaded', type: 'application/pdf', size: 3 };
+  });
+  return { jmap: server.client, writes };
 }
 
 async function connect(answers: ('accept' | 'decline')[], opts: { elicitation?: boolean; mode?: 'elicit' | 'client'; exempt?: string[]; uploadDir?: string } = {}) {
-  const { jmap, writes } = fakeJmap();
+  const { jmap, writes } = await fakeJmap();
   const server = new McpServer({ name: 't', version: '0' });
   setApprover(server, { mode: opts.mode ?? 'elicit', language: 'fr', timeoutMs: 2000, as: 'alice.martin@example.com', timeZone: 'Europe/Paris', exempt: opts.exempt, signature: '--\nAlice MARTIN' });
   registerAllTools(server, jmap, logger, { signatureContent: { text: '--\nAlice MARTIN', html: '<p>--<br>Alice MARTIN</p>' } }, { uploadDir: opts.uploadDir });

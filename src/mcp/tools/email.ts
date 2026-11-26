@@ -5,7 +5,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
-import type { JMAPClient } from '../../jmap/client.js';
+import { errorText, type JmapClient } from '../../jmap/client.js';
 import type { Logger } from '../../config/logger.js';
 import { transformEmail } from '../../transformers/email.js';
 import { buildSearchFilter } from './search-filter.js';
@@ -47,7 +47,7 @@ const FULL_EMAIL_PROPERTIES = [
   'textBody',
   'htmlBody',
   'attachments',
-];
+] as const;
 
 /**
  * Properties to fetch for email summaries (search_emails).
@@ -65,7 +65,7 @@ const SUMMARY_EMAIL_PROPERTIES = [
   'receivedAt',
   'preview',
   'hasAttachment',
-];
+] as const;
 
 /**
  * Register email MCP tools with the server.
@@ -75,7 +75,7 @@ const SUMMARY_EMAIL_PROPERTIES = [
  */
 export function registerEmailTools(
   server: McpServer,
-  jmapClient: JMAPClient,
+  jmapClient: JmapClient,
   logger: Logger
 ): void {
   // get_email - retrieve single email by ID with full content (EMAIL-03)
@@ -93,37 +93,30 @@ export function registerEmailTools(
       logger.debug({ emailId }, 'get_email called');
 
       try {
-        const session = jmapClient.getSession();
-        const response = await jmapClient.request([
-          [
-            'Email/get',
-            {
-              accountId: session.accountId,
-              ids: [emailId],
-              properties: FULL_EMAIL_PROPERTIES,
-              fetchTextBodyValues: true,
-              fetchHTMLBodyValues: true,
-              bodyProperties: ['partId', 'blobId', 'type', 'name', 'size'],
-            },
-            'getEmail',
-          ],
+        const [result] = await jmapClient.requestSettled((b) => [
+          b.call('Email/get', {
+            accountId: jmapClient.getPrimaryAccountId(),
+            ids: [emailId],
+            properties: FULL_EMAIL_PROPERTIES,
+            fetchTextBodyValues: true,
+            fetchHTMLBodyValues: true,
+            bodyProperties: ['partId', 'blobId', 'type', 'name', 'size'],
+          }),
         ]);
-
-        const result = jmapClient.parseMethodResponse(response.methodResponses[0]);
-        if (!result.success) {
+        if (!result.ok) {
           logger.error({ error: result.error, emailId }, 'JMAP error in get_email');
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
-                text: `Failed to retrieve email: ${result.error?.description || result.error?.type || 'Unknown error'}`,
+                text: `Failed to retrieve email: ${errorText(result.error)}`,
               },
             ],
           };
         }
 
-        const emails = result.data?.list as unknown[];
+        const emails = result.value.list;
         if (!emails || emails.length === 0) {
           return {
             isError: true,
@@ -137,7 +130,7 @@ export function registerEmailTools(
         }
 
         // Transform JMAP email to SimplifiedEmail
-        const email = transformEmail(emails[0] as Parameters<typeof transformEmail>[0]);
+        const email = transformEmail(emails[0]);
 
         logger.debug({ emailId, subject: email.subject }, 'get_email success');
 
@@ -156,7 +149,7 @@ export function registerEmailTools(
           content: [
             {
               type: 'text' as const,
-              text: `Error retrieving email: ${error instanceof Error ? error.message : String(error)}`,
+              text: `Error retrieving email: ${errorText(error)}`,
             },
           ],
         };
@@ -212,80 +205,62 @@ export function registerEmailTools(
       }
 
       try {
-        const session = jmapClient.getSession();
+        const accountId = jmapClient.getPrimaryAccountId();
 
         // Use back-reference pattern: Email/query -> Email/get with '#ids'
-        const response = await jmapClient.request([
-          [
-            'Email/query',
-            {
-              accountId: session.accountId,
-              filter,
-              sort: [{ property: 'receivedAt', isAscending: false }],
-              position,
-              limit,
-              calculateTotal: true,
-            },
-            'queryEmails',
-          ],
-          [
-            'Email/get',
-            {
-              accountId: session.accountId,
-              '#ids': {
-                resultOf: 'queryEmails',
-                name: 'Email/query',
-                path: '/ids',
-              },
-              properties: SUMMARY_EMAIL_PROPERTIES,
-            },
-            'getEmails',
-          ],
-          ['Mailbox/get', { accountId: session.accountId, properties: ['id', 'name'] }, 'getMailboxNames'],
-        ]);
+        const [queryResult, getResult, mailboxResult] = await jmapClient.requestSettled((b) => {
+          const query = b.call('Email/query', {
+            accountId,
+            filter,
+            sort: [{ property: 'receivedAt', isAscending: false }],
+            position,
+            limit,
+            calculateTotal: true,
+          });
+          return [
+            query,
+            b.call('Email/get', { accountId, '#ids': query.ref('/ids'), properties: SUMMARY_EMAIL_PROPERTIES }),
+            b.call('Mailbox/get', { accountId, properties: ['id', 'name'] }),
+          ];
+        });
 
         // Check query response
-        const queryResult = jmapClient.parseMethodResponse(response.methodResponses[0]);
-        if (!queryResult.success) {
+        if (!queryResult.ok) {
           logger.error({ error: queryResult.error }, 'JMAP query error in search_emails');
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
-                text: `Search failed: ${queryResult.error?.description || queryResult.error?.type || 'Unknown error'}`,
+                text: `Search failed: ${errorText(queryResult.error)}`,
               },
             ],
           };
         }
 
         // Check get response
-        const getResult = jmapClient.parseMethodResponse(response.methodResponses[1]);
-        if (!getResult.success) {
+        if (!getResult.ok) {
           logger.error({ error: getResult.error }, 'JMAP get error in search_emails');
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
-                text: `Failed to fetch email details: ${getResult.error?.description || getResult.error?.type || 'Unknown error'}`,
+                text: `Failed to fetch email details: ${errorText(getResult.error)}`,
               },
             ],
           };
         }
 
-        const emails = (getResult.data?.list as unknown[]) || [];
+        const emails = getResult.value.list || [];
         // Mailbox names help read the results; without them, the ids stay
-        const mailboxResult = response.methodResponses[2] ? jmapClient.parseMethodResponse(response.methodResponses[2]) : undefined;
-        const names = new Map(
-          ((mailboxResult?.success ? (mailboxResult.data?.list as Array<{ id: string; name: string }>) : undefined) ?? []).map((m) => [m.id, m.name])
-        );
+        const names = new Map(((mailboxResult.ok ? mailboxResult.value.list : undefined) ?? []).map((m) => [m.id, m.name]));
         const transformedEmails = emails.map((email) => {
-          const simplified = transformEmail(email as Parameters<typeof transformEmail>[0]);
+          const simplified = transformEmail(email);
           return { ...simplified, mailboxNames: simplified.mailboxIds.map((id) => names.get(id) ?? id) };
         });
 
-        const totalFound = (queryResult.data?.total as number) || emails.length;
+        const totalFound = queryResult.value.total || emails.length;
 
         logger.debug({ count: transformedEmails.length, total: totalFound }, 'search_emails success');
 
@@ -313,7 +288,7 @@ export function registerEmailTools(
           content: [
             {
               type: 'text' as const,
-              text: `Search error: ${error instanceof Error ? error.message : String(error)}`,
+              text: `Search error: ${errorText(error)}`,
             },
           ],
         };
@@ -336,34 +311,27 @@ export function registerEmailTools(
       logger.debug({ emailId }, 'get_email_labels called');
 
       try {
-        const session = jmapClient.getSession();
-        const response = await jmapClient.request([
-          [
-            'Email/get',
-            {
-              accountId: session.accountId,
-              ids: [emailId],
-              properties: ['id', 'mailboxIds'],
-            },
-            'getEmailLabels',
-          ],
+        const [result] = await jmapClient.requestSettled((b) => [
+          b.call('Email/get', {
+            accountId: jmapClient.getPrimaryAccountId(),
+            ids: [emailId],
+            properties: ['id', 'mailboxIds'],
+          }),
         ]);
-
-        const result = jmapClient.parseMethodResponse(response.methodResponses[0]);
-        if (!result.success) {
+        if (!result.ok) {
           logger.error({ error: result.error, emailId }, 'JMAP error in get_email_labels');
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
-                text: `Failed to get email labels: ${result.error?.description || result.error?.type || 'Unknown error'}`,
+                text: `Failed to get email labels: ${errorText(result.error)}`,
               },
             ],
           };
         }
 
-        const emails = result.data?.list as Array<{ id: string; mailboxIds: Record<string, boolean> }>;
+        const emails = result.value.list;
         if (!emails || emails.length === 0) {
           return {
             isError: true,
@@ -405,7 +373,7 @@ export function registerEmailTools(
           content: [
             {
               type: 'text' as const,
-              text: `Error getting email labels: ${error instanceof Error ? error.message : String(error)}`,
+              text: `Error getting email labels: ${errorText(error)}`,
             },
           ],
         };

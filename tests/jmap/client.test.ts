@@ -1,9 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import createFetchMock from 'vitest-fetch-mock';
-import { JMAPClient } from '../../src/jmap/client.js';
+import { JmapHttpError, JmapMethodError, JmapRequestError } from '@linagora/jmap-client-ts';
+import {
+  connect,
+  createJmapClient,
+  downloadBlob,
+  errorText,
+  SESSION_TIMEOUT,
+  toJMAPError,
+  uploadBlob,
+} from '../../src/jmap/client.js';
 import { JMAPError } from '../../src/errors.js';
 import type { Config } from '../../src/config/schema.js';
-import type { Logger } from '../../src/config/logger.js';
+import { sessionDocument, testConfig, testLogger } from '../../src/jmap/__tests__/fake-jmap.js';
 
 // Mock the token-refresh module
 vi.mock('../../src/auth/token-refresh.js', () => ({
@@ -14,567 +22,526 @@ vi.mock('../../src/auth/token-refresh.js', () => ({
 import { createTokenRefresher } from '../../src/auth/token-refresh.js';
 const mockCreateTokenRefresher = vi.mocked(createTokenRefresher);
 
-// Setup fetch mock
-const fetchMocker = createFetchMock(vi);
+const SESSION_URL = 'https://jmap.example.com/session';
+const API_URL = 'https://jmap.example.com/api';
 
-// Mock config
-const mockConfig: Config = {
-  JMAP_SESSION_URL: 'https://jmap.example.com/session',
+const mockConfig: Config = testConfig({
+  JMAP_SESSION_URL: SESSION_URL,
   JMAP_AUTH_METHOD: 'basic',
   JMAP_USERNAME: 'testuser',
   JMAP_PASSWORD: 'testpass',
-  JMAP_TOKEN: undefined,
-  JMAP_REQUEST_TIMEOUT: 30000,
-  LOG_LEVEL: 'info',
-  JMAP_OIDC_SCOPE: 'openid email offline_access',
-  JMAP_OIDC_REDIRECT_URI: 'http://localhost:3000/callback',
-};
+});
 
-// OIDC config for OIDC tests
-const mockOidcConfig: Config = {
-  JMAP_SESSION_URL: 'https://jmap.example.com/session',
+const mockOidcConfig: Config = testConfig({
+  JMAP_SESSION_URL: SESSION_URL,
   JMAP_AUTH_METHOD: 'oidc',
+  JMAP_USERNAME: undefined,
+  JMAP_PASSWORD: undefined,
   JMAP_OIDC_ISSUER: 'https://auth.example.com',
   JMAP_OIDC_CLIENT_ID: 'test-client-id',
-  JMAP_OIDC_SCOPE: 'openid email offline_access',
-  JMAP_OIDC_REDIRECT_URI: 'http://localhost:3000/callback',
-  JMAP_REQUEST_TIMEOUT: 30000,
-  LOG_LEVEL: 'info',
-};
+});
 
-// Mock logger
-const mockLogger: Logger = {
-  info: vi.fn(),
-  debug: vi.fn(),
-  warn: vi.fn(),
-  error: vi.fn(),
-  fatal: vi.fn(),
-  trace: vi.fn(),
-  child: vi.fn().mockReturnThis(),
-  level: 'info',
-} as unknown as Logger;
+const validSession = sessionDocument('account-123');
 
-// Valid session response
-const validSessionResponse = {
-  capabilities: {
-    'urn:ietf:params:jmap:core': {},
-    'urn:ietf:params:jmap:mail': {},
-  },
-  accounts: {
-    'account-123': {
-      name: 'Test User',
-      isPersonal: true,
-      accountCapabilities: {},
-    },
-  },
-  primaryAccounts: {
-    'urn:ietf:params:jmap:mail': 'account-123',
-  },
-  apiUrl: 'https://jmap.example.com/api',
-  state: 'session-state-1',
-};
+const json = (body: unknown, init: ResponseInit = {}) =>
+  new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' }, ...init });
 
-describe('JMAPClient', () => {
+const apiAnswer = (methodResponses: unknown[]) => json({ methodResponses, sessionState: validSession.state });
+
+/** A fetch answering each request with the next response of the list. */
+function scriptedFetch(...responses: Array<Response | ((url: string, init?: RequestInit) => Response | Promise<Response>)>) {
+  return vi.fn(async (url: string, init?: RequestInit) => {
+    const next = responses.shift();
+    if (!next) throw new Error(`unexpected fetch ${url}`);
+    return typeof next === 'function' ? next(url, init) : next;
+  });
+}
+
+const header = (init: RequestInit | undefined, name: string) => new Headers(init?.headers).get(name);
+
+/** A fetch that sends the headers at once, then a body that ends only when aborted. */
+const stallingBodyFetch = () =>
+  vi.fn(
+    async (_url: string, init?: RequestInit) =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array([1, 2, 3]));
+            init?.signal?.addEventListener('abort', () => controller.error(init.signal?.reason));
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/octet-stream' } }
+      )
+  );
+
+/** A fetch that answers only when aborted, as a server that never answers. */
+const hangingFetch = () =>
+  vi.fn(
+    (_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+      })
+  );
+
+describe('createJmapClient and connect', () => {
+  const logger = testLogger();
+
   beforeEach(() => {
-    fetchMocker.enableMocks();
-    fetchMocker.resetMocks();
     vi.clearAllMocks();
   });
 
   afterEach(() => {
-    fetchMocker.disableMocks();
+    vi.restoreAllMocks();
   });
 
-  describe('fetchSession', () => {
-    it('should fetch and parse session correctly', async () => {
-      fetchMocker.mockResponseOnce(JSON.stringify(validSessionResponse));
+  describe('connect', () => {
+    it('fetches the session and returns the mail account', async () => {
+      const fetch = scriptedFetch(json(validSession));
+      const client = createJmapClient(mockConfig, logger, { fetch });
 
-      const client = new JMAPClient(mockConfig, mockLogger);
-      const session = await client.fetchSession();
+      const account = await connect(client, logger, SESSION_URL);
 
-      expect(session.apiUrl).toBe('https://jmap.example.com/api');
-      expect(session.accountId).toBe('account-123');
-      expect(session.state).toBe('session-state-1');
-      expect(session.capabilities).toHaveProperty('urn:ietf:params:jmap:core');
-
-      // Verify fetch was called with correct params
-      expect(fetchMocker).toHaveBeenCalledOnce();
-      const [url, options] = fetchMocker.mock.calls[0];
-      expect(url).toBe('https://jmap.example.com/session');
-      expect(options?.method).toBe('GET');
-      expect(options?.headers).toHaveProperty('Authorization');
+      expect(account.accountId).toBe('account-123');
+      expect(account.username).toBe('user@example.com');
+      expect(account.session.apiUrl).toBe(API_URL);
+      expect(account.session.capabilities).toHaveProperty('urn:ietf:params:jmap:core');
+      expect(fetch).toHaveBeenCalledOnce();
+      const [url, init] = fetch.mock.calls[0];
+      expect(url).toBe(SESSION_URL);
+      expect(init?.method ?? 'GET').toBe('GET');
+      expect(header(init, 'Authorization')).toBeTruthy();
     });
 
-    it('should throw JMAPError when no mail account found', async () => {
-      const noMailSession = {
-        ...validSessionResponse,
-        primaryAccounts: {}, // No mail account
-      };
-      fetchMocker.mockResponseOnce(JSON.stringify(noMailSession));
+    it('throws JMAPError when no mail account is found', async () => {
+      const fetch = scriptedFetch(json({ ...validSession, primaryAccounts: {} }));
+      const client = createJmapClient(mockConfig, logger, { fetch });
 
-      const client = new JMAPClient(mockConfig, mockLogger);
-
-      try {
-        await client.fetchSession();
-        expect.fail('Expected JMAPError to be thrown');
-      } catch (error) {
-        expect(error).toBeInstanceOf(JMAPError);
-        expect((error as JMAPError).type).toBe('noMailAccount');
-      }
-    });
-
-    it('should throw JMAPError on HTTP 401', async () => {
-      fetchMocker.mockResponseOnce('Unauthorized', { status: 401, statusText: 'Unauthorized' });
-
-      const client = new JMAPClient(mockConfig, mockLogger);
-
-      try {
-        await client.fetchSession();
-        expect.fail('Expected JMAPError to be thrown');
-      } catch (error) {
-        expect(error).toBeInstanceOf(JMAPError);
-        expect((error as JMAPError).type).toBe('unauthorized');
-      }
-    });
-
-    it('should throw JMAPError on HTTP 500', async () => {
-      fetchMocker.mockResponseOnce('Server Error', { status: 500, statusText: 'Internal Server Error' });
-
-      const client = new JMAPClient(mockConfig, mockLogger);
-
-      try {
-        await client.fetchSession();
-        expect.fail('Expected JMAPError to be thrown');
-      } catch (error) {
-        expect(error).toBeInstanceOf(JMAPError);
-        expect((error as JMAPError).type).toBe('serverError');
-      }
-    });
-
-    it('should use Basic auth header for basic auth method', async () => {
-      fetchMocker.mockResponseOnce(JSON.stringify(validSessionResponse));
-
-      const client = new JMAPClient(mockConfig, mockLogger);
-      await client.fetchSession();
-
-      const [, options] = fetchMocker.mock.calls[0];
-      const expectedToken = Buffer.from('testuser:testpass').toString('base64');
-      expect(options?.headers?.['Authorization']).toBe(`Basic ${expectedToken}`);
-    });
-
-    it('should use Bearer auth header for bearer auth method', async () => {
-      const bearerConfig: Config = {
-        ...mockConfig,
-        JMAP_AUTH_METHOD: 'bearer',
-        JMAP_TOKEN: 'test-bearer-token',
-      };
-      fetchMocker.mockResponseOnce(JSON.stringify(validSessionResponse));
-
-      const client = new JMAPClient(bearerConfig, mockLogger);
-      await client.fetchSession();
-
-      const [, options] = fetchMocker.mock.calls[0];
-      expect(options?.headers?.['Authorization']).toBe('Bearer test-bearer-token');
-    });
-  });
-
-  describe('getSession', () => {
-    it('should throw error if session not initialized', () => {
-      const client = new JMAPClient(mockConfig, mockLogger);
-
-      expect(() => client.getSession()).toThrow(JMAPError);
-      expect(() => client.getSession()).toThrow('Session not initialized');
-    });
-
-    it('should return session after fetchSession', async () => {
-      fetchMocker.mockResponseOnce(JSON.stringify(validSessionResponse));
-
-      const client = new JMAPClient(mockConfig, mockLogger);
-      await client.fetchSession();
-      const session = client.getSession();
-
-      expect(session.accountId).toBe('account-123');
-    });
-  });
-
-  describe('request', () => {
-    beforeEach(async () => {
-      fetchMocker.mockResponseOnce(JSON.stringify(validSessionResponse));
-    });
-
-    it('should send batched request with multiple methodCalls', async () => {
-      const client = new JMAPClient(mockConfig, mockLogger);
-      await client.fetchSession();
-
-      const batchedResponse = {
-        methodResponses: [
-          ['Email/get', { accountId: 'account-123', list: [], state: 'email-state-1' }, 'c1'],
-          ['Mailbox/get', { accountId: 'account-123', list: [], state: 'mailbox-state-1' }, 'c2'],
-        ],
-        sessionState: 'session-state-1',
-      };
-      fetchMocker.mockResponseOnce(JSON.stringify(batchedResponse));
-
-      const response = await client.request([
-        ['Email/get', { accountId: 'account-123', ids: null }, 'c1'],
-        ['Mailbox/get', { accountId: 'account-123', ids: null }, 'c2'],
-      ]);
-
-      expect(response.methodResponses).toHaveLength(2);
-      expect(response.methodResponses[0][0]).toBe('Email/get');
-      expect(response.methodResponses[1][0]).toBe('Mailbox/get');
-
-      // Verify single HTTP call with both methods
-      expect(fetchMocker).toHaveBeenCalledTimes(2); // 1 session + 1 request
-      const [, options] = fetchMocker.mock.calls[1];
-      const requestBody = JSON.parse(options?.body as string);
-      expect(requestBody.methodCalls).toHaveLength(2);
-    });
-
-    it('should use default capabilities if not provided', async () => {
-      const client = new JMAPClient(mockConfig, mockLogger);
-      await client.fetchSession();
-
-      const response = {
-        methodResponses: [['Email/get', { list: [] }, 'c1']],
-      };
-      fetchMocker.mockResponseOnce(JSON.stringify(response));
-
-      await client.request([['Email/get', { accountId: 'account-123' }, 'c1']]);
-
-      const [, options] = fetchMocker.mock.calls[1];
-      const requestBody = JSON.parse(options?.body as string);
-      expect(requestBody.using).toContain('urn:ietf:params:jmap:core');
-      expect(requestBody.using).toContain('urn:ietf:params:jmap:mail');
-    });
-
-    it('should throw error if session not initialized', async () => {
-      const client = new JMAPClient(mockConfig, mockLogger);
-
-      await expect(
-        client.request([['Email/get', {}, 'c1']])
-      ).rejects.toThrow('Session not initialized');
-    });
-
-    it('should throw JMAPError on HTTP error during request', async () => {
-      const client = new JMAPClient(mockConfig, mockLogger);
-      await client.fetchSession();
-
-      fetchMocker.mockResponseOnce('Forbidden', { status: 403, statusText: 'Forbidden' });
-
-      await expect(
-        client.request([['Email/get', {}, 'c1']])
-      ).rejects.toMatchObject({
-        type: 'forbidden',
-      });
-    });
-
-    it('should warn when session state changes', async () => {
-      const client = new JMAPClient(mockConfig, mockLogger);
-      await client.fetchSession();
-
-      const response = {
-        methodResponses: [['Email/get', { list: [] }, 'c1']],
-        sessionState: 'session-state-2', // Changed state
-      };
-      fetchMocker.mockResponseOnce(JSON.stringify(response));
-
-      await client.request([['Email/get', {}, 'c1']]);
-
-      expect(mockLogger.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ oldState: 'session-state-1', newState: 'session-state-2' }),
-        expect.any(String)
+      await expect(connect(client, logger)).rejects.toSatisfy(
+        (error) => error instanceof JMAPError && error.type === 'noMailAccount'
       );
     });
+
+    it('throws JMAPError on HTTP 401', async () => {
+      const fetch = scriptedFetch(new Response('Unauthorized', { status: 401, statusText: 'Unauthorized' }));
+      const client = createJmapClient(mockConfig, logger, { fetch });
+
+      const error = await connect(client, logger).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(JMAPError);
+      expect((error as JMAPError).type).toBe('unauthorized');
+      expect((error as JMAPError).message).toBe('HTTP 401: Unauthorized');
+      // basic auth cannot be refreshed: no second try
+      expect(fetch).toHaveBeenCalledOnce();
+    });
+
+    it('throws JMAPError on HTTP 500', async () => {
+      const fetch = scriptedFetch(new Response('Server Error', { status: 500, statusText: 'Internal Server Error' }));
+      const client = createJmapClient(mockConfig, logger, { fetch });
+
+      await expect(connect(client, logger)).rejects.toMatchObject({ type: 'serverError' });
+    });
+
+    it('throws JMAPError when the session is not JMAP', async () => {
+      const fetch = scriptedFetch(json({ hello: 'world' }));
+      const client = createJmapClient(mockConfig, logger, { fetch });
+
+      await expect(connect(client, logger)).rejects.toMatchObject({ type: 'invalidResponse' });
+    });
+
+    it('warns when the session has no upload or download URL', async () => {
+      const warn = testLogger();
+      const fetch = scriptedFetch(json({ ...validSession, uploadUrl: '', downloadUrl: '' }));
+      const client = createJmapClient(mockConfig, warn, { fetch });
+
+      await connect(client, warn);
+
+      expect(warn.warn).toHaveBeenCalledWith(expect.stringContaining('No downloadUrl'));
+      expect(warn.warn).toHaveBeenCalledWith(expect.stringContaining('No uploadUrl'));
+    });
+
+    it('uses a Basic auth header for basic auth', async () => {
+      const fetch = scriptedFetch(json(validSession));
+      await connect(createJmapClient(mockConfig, logger, { fetch }), logger);
+
+      const expectedToken = Buffer.from('testuser:testpass').toString('base64');
+      expect(header(fetch.mock.calls[0][1], 'Authorization')).toBe(`Basic ${expectedToken}`);
+    });
+
+    it('uses a Bearer auth header for bearer auth', async () => {
+      const fetch = scriptedFetch(json(validSession));
+      const bearerConfig = testConfig({ JMAP_AUTH_METHOD: 'bearer', JMAP_TOKEN: 'test-bearer-token' });
+      await connect(createJmapClient(bearerConfig, logger, { fetch }), logger);
+
+      expect(header(fetch.mock.calls[0][1], 'Authorization')).toBe('Bearer test-bearer-token');
+    });
   });
 
-  describe('parseMethodResponse', () => {
-    it('should parse successful response', async () => {
-      fetchMocker.mockResponseOnce(JSON.stringify(validSessionResponse));
-      const client = new JMAPClient(mockConfig, mockLogger);
-      await client.fetchSession();
+  describe('timeouts', () => {
+    it('gives the session 5 seconds and API calls JMAP_REQUEST_TIMEOUT', async () => {
+      const timeout = vi.spyOn(AbortSignal, 'timeout');
+      const fetch = scriptedFetch(json(validSession), apiAnswer([['Mailbox/get', { list: [], notFound: [] }, 'c0']]));
+      const client = createJmapClient(testConfig({ JMAP_REQUEST_TIMEOUT: 12345 }), logger, { fetch });
 
-      const result = client.parseMethodResponse([
-        'Email/get',
-        { accountId: 'account-123', list: [{ id: 'email-1' }], state: 'state-1' },
-        'c1',
-      ]);
+      await connect(client, logger);
+      await client.call('Mailbox/get', { accountId: 'account-1' });
 
-      expect(result.success).toBe(true);
-      expect(result.data?.list).toEqual([{ id: 'email-1' }]);
+      expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([SESSION_TIMEOUT, 12345]);
+      expect(fetch.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
+      expect(fetch.mock.calls[1][1]?.signal).toBeInstanceOf(AbortSignal);
     });
 
-    it('should parse error response', async () => {
-      fetchMocker.mockResponseOnce(JSON.stringify(validSessionResponse));
-      const client = new JMAPClient(mockConfig, mockLogger);
-      await client.fetchSession();
+    it('reports a session that does not answer in time', async () => {
+      vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => {
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(new DOMException('timed out', 'TimeoutError')), 5);
+        return controller.signal;
+      });
+      const client = createJmapClient(mockConfig, logger, { fetch: hangingFetch() });
 
-      const result = client.parseMethodResponse([
-        'error',
-        { type: 'stateMismatch', description: 'State is stale' },
-        'c1',
-      ]);
+      const error = await connect(client, logger).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(JMAPError);
+      expect((error as JMAPError).type).toBe('timeout');
+      expect((error as JMAPError).message).toBe('session fetch timed out');
+    });
 
-      expect(result.success).toBe(false);
-      expect(result.error?.type).toBe('stateMismatch');
-      expect(result.error?.description).toBe('State is stale');
+    it('reports an API request that does not answer in time', async () => {
+      const hanging = hangingFetch();
+      const fetch = scriptedFetch(json(validSession), (url, init) => hanging(url, init));
+      const client = createJmapClient(testConfig({ JMAP_REQUEST_TIMEOUT: 10 }), logger, { fetch });
+      await connect(client, logger);
+
+      const error = await client.call('Mailbox/get', { accountId: 'account-1' }).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(JMAPError);
+      expect((error as JMAPError).message).toBe('JMAP request timed out');
+      expect(errorText(error)).toBe('JMAP request timed out');
+    });
+
+    it('reports a download that does not answer in time', async () => {
+      const hanging = hangingFetch();
+      const fetch = scriptedFetch(json(validSession), (url, init) => hanging(url, init));
+      const client = createJmapClient(testConfig({ JMAP_REQUEST_TIMEOUT: 10 }), logger, { fetch });
+      await connect(client, logger);
+
+      await expect(downloadBlob(client, 'blob-1')).rejects.toThrow('blob download timed out');
+    });
+
+    it('reports a download whose body does not arrive in time', async () => {
+      const stalling = stallingBodyFetch();
+      const fetch = scriptedFetch(json(validSession), (url, init) => stalling(url, init));
+      const client = createJmapClient(testConfig({ JMAP_REQUEST_TIMEOUT: 10 }), logger, { fetch });
+      await connect(client, logger);
+
+      await expect(downloadBlob(client, 'blob-1')).rejects.toThrow('blob download timed out');
+    });
+
+    it('reports an upload that does not answer in time', async () => {
+      const hanging = hangingFetch();
+      const fetch = scriptedFetch(json(validSession), (url, init) => hanging(url, init));
+      const client = createJmapClient(testConfig({ JMAP_REQUEST_TIMEOUT: 10 }), logger, { fetch });
+      await connect(client, logger);
+
+      await expect(uploadBlob(client, new Uint8Array([1]), 'application/pdf')).rejects.toThrow('blob upload timed out');
+    });
+
+    it('lets a network error through unchanged', async () => {
+      const fetch = scriptedFetch(() => {
+        throw new TypeError('fetch failed');
+      });
+      const client = createJmapClient(mockConfig, logger, { fetch });
+
+      await expect(connect(client, logger)).rejects.toThrow('fetch failed');
     });
   });
 
-  describe('state tracking', () => {
-    beforeEach(async () => {
-      fetchMocker.mockResponseOnce(JSON.stringify(validSessionResponse));
+  describe('method calls', () => {
+    it('sends the calls with the capabilities they need', async () => {
+      const fetch = scriptedFetch(
+        json(validSession),
+        apiAnswer([
+          ['Email/query', { ids: ['e1'], position: 0, queryState: 'q', canCalculateChanges: false }, 'c0'],
+          ['Email/get', { list: [{ id: 'e1', subject: 'Hello' }], notFound: [], state: 's' }, 'c1'],
+        ])
+      );
+      const client = createJmapClient(mockConfig, logger, { fetch });
+      await connect(client, logger);
+
+      const [, emails] = await client.request((b) => {
+        const q = b.call('Email/query', { accountId: 'account-123', limit: 1 });
+        return [q, b.call('Email/get', { accountId: 'account-123', '#ids': q.ref('/ids'), properties: ['subject'] })];
+      });
+
+      expect(emails.list[0].subject).toBe('Hello');
+      const [url, init] = fetch.mock.calls[1];
+      expect(url).toBe(API_URL);
+      expect(init?.method).toBe('POST');
+      const body = JSON.parse(String(init?.body));
+      expect(body.using).toEqual(['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail']);
+      expect(body.methodCalls[1][1]['#ids']).toEqual({ resultOf: 'c0', name: 'Email/query', path: '/ids' });
     });
 
-    it('should track state from response', async () => {
-      const client = new JMAPClient(mockConfig, mockLogger);
-      await client.fetchSession();
+    it('reports a method error with its description', async () => {
+      const fetch = scriptedFetch(
+        json(validSession),
+        apiAnswer([['error', { type: 'serverError', description: 'Internal server error' }, 'c0']])
+      );
+      const client = createJmapClient(mockConfig, logger, { fetch });
+      await connect(client, logger);
 
-      const response = {
-        methodResponses: [
-          ['Email/get', { list: [], state: 'email-state-1' }, 'c1'],
-        ],
-      };
-      fetchMocker.mockResponseOnce(JSON.stringify(response));
-
-      await client.request([['Email/get', {}, 'c1']]);
-
-      expect(client.getState('Email')).toBe('email-state-1');
+      const error = await client.call('Mailbox/get', { accountId: 'account-123' }).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(JmapMethodError);
+      expect(errorText(error)).toBe('Internal server error');
     });
 
-    it('should track newState from response', async () => {
-      const client = new JMAPClient(mockConfig, mockLogger);
-      await client.fetchSession();
+    it('reports an HTTP error as before', async () => {
+      const fetch = scriptedFetch(json(validSession), new Response('', { status: 503, statusText: 'Service Unavailable' }));
+      const client = createJmapClient(mockConfig, logger, { fetch });
+      await connect(client, logger);
 
-      const response = {
-        methodResponses: [
-          ['Email/set', { newState: 'email-state-2' }, 'c1'],
-        ],
-      };
-      fetchMocker.mockResponseOnce(JSON.stringify(response));
-
-      await client.request([['Email/set', {}, 'c1']]);
-
-      expect(client.getState('Email')).toBe('email-state-2');
-    });
-
-    it('should return undefined for untracked state', async () => {
-      fetchMocker.mockResponseOnce(JSON.stringify(validSessionResponse));
-      const client = new JMAPClient(mockConfig, mockLogger);
-      await client.fetchSession();
-
-      expect(client.getState('Thread')).toBeUndefined();
-    });
-
-    it('should clear specific state', async () => {
-      const client = new JMAPClient(mockConfig, mockLogger);
-      await client.fetchSession();
-
-      client.updateState('Email', 'state-1');
-      client.updateState('Mailbox', 'state-2');
-      client.clearState('Email');
-
-      expect(client.getState('Email')).toBeUndefined();
-      expect(client.getState('Mailbox')).toBe('state-2');
-    });
-
-    it('should clear all state', async () => {
-      const client = new JMAPClient(mockConfig, mockLogger);
-      await client.fetchSession();
-
-      client.updateState('Email', 'state-1');
-      client.updateState('Mailbox', 'state-2');
-      client.clearState();
-
-      expect(client.getState('Email')).toBeUndefined();
-      expect(client.getState('Mailbox')).toBeUndefined();
+      const error = await client.call('Mailbox/get', { accountId: 'account-123' }).catch((e: unknown) => e);
+      expect(errorText(error)).toBe('HTTP 503: Service Unavailable');
     });
   });
 
   describe('uploadBlob', () => {
-    const withUpload = { ...validSessionResponse, uploadUrl: 'https://jmap.example.com/upload/{accountId}/' };
-
     it('posts the bytes to the upload URL with their type and returns the blob', async () => {
-      fetchMocker.mockResponseOnce(JSON.stringify(withUpload));
-      fetchMocker.mockResponseOnce(JSON.stringify({ accountId: 'account-123', blobId: 'blob-9', type: 'application/pdf', size: 3 }));
-      const client = new JMAPClient(mockConfig, mockLogger);
-      await client.fetchSession();
+      const fetch = scriptedFetch(
+        json({ ...validSession, uploadUrl: 'https://jmap.example.com/upload/{accountId}/' }),
+        json({ accountId: 'account-123', blobId: 'blob-9', type: 'application/pdf', size: 3 }, { status: 201 })
+      );
+      const client = createJmapClient(mockConfig, logger, { fetch });
+      await connect(client, logger);
 
-      const blob = await client.uploadBlob(new Uint8Array([1, 2, 3]), 'application/pdf');
+      const blob = await uploadBlob(client, new Uint8Array([1, 2, 3]), 'application/pdf');
 
       expect(blob).toMatchObject({ blobId: 'blob-9', type: 'application/pdf', size: 3 });
-      const [url, options] = fetchMocker.mock.calls[1];
+      const [url, init] = fetch.mock.calls[1];
       expect(url).toBe('https://jmap.example.com/upload/account-123/');
-      expect(options?.method).toBe('POST');
-      expect((options?.headers as Record<string, string>)['Content-Type']).toBe('application/pdf');
-      expect(options?.headers).toHaveProperty('Authorization');
+      expect(init?.method).toBe('POST');
+      expect(header(init, 'Content-Type')).toBe('application/pdf');
+      expect(header(init, 'Authorization')).toBeTruthy();
     });
 
     it('reports an HTTP refusal', async () => {
-      fetchMocker.mockResponseOnce(JSON.stringify(withUpload));
-      fetchMocker.mockResponseOnce('too large', { status: 413, statusText: 'Payload Too Large' });
-      const client = new JMAPClient(mockConfig, mockLogger);
-      await client.fetchSession();
+      const fetch = scriptedFetch(json(validSession), new Response('too large', { status: 413, statusText: 'Payload Too Large' }));
+      const client = createJmapClient(mockConfig, logger, { fetch });
+      await connect(client, logger);
 
-      await expect(client.uploadBlob(new Uint8Array([1]), 'application/pdf')).rejects.toBeInstanceOf(JMAPError);
+      const error = await uploadBlob(client, new Uint8Array([1]), 'application/pdf').catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(JMAPError);
+      expect((error as JMAPError).message).toBe('HTTP 413: Payload Too Large');
     });
 
     it('says when the server gives no upload URL', async () => {
-      fetchMocker.mockResponseOnce(JSON.stringify(validSessionResponse));
-      const client = new JMAPClient(mockConfig, mockLogger);
-      await client.fetchSession();
+      const fetch = scriptedFetch(json({ ...validSession, uploadUrl: '' }));
+      const client = createJmapClient(mockConfig, logger, { fetch });
+      await connect(client, logger);
 
-      await expect(client.uploadBlob(new Uint8Array([1]), 'application/pdf')).rejects.toMatchObject({ type: 'uploadUrlMissing' });
+      await expect(uploadBlob(client, new Uint8Array([1]), 'application/pdf')).rejects.toMatchObject({ type: 'uploadUrlMissing' });
+      expect(fetch).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('downloadBlob', () => {
+    it('gets the blob from the download URL with authentication', async () => {
+      const fetch = scriptedFetch(json(validSession), new Response(new Uint8Array([1, 2, 3])));
+      const client = createJmapClient(mockConfig, logger, { fetch });
+      await connect(client, logger);
+
+      const data = await downloadBlob(client, 'blob-1', 'devis.pdf', 'application/pdf');
+
+      expect(new Uint8Array(data)).toEqual(new Uint8Array([1, 2, 3]));
+      const [url, init] = fetch.mock.calls[1];
+      expect(url).toBe('https://jmap.example.com/download/account-123/blob-1/devis.pdf?type=application%2Fpdf');
+      expect(header(init, 'Authorization')).toBeTruthy();
+    });
+
+    it('names an unnamed blob "attachment"', async () => {
+      const fetch = scriptedFetch(json(validSession), new Response('x'));
+      const client = createJmapClient(mockConfig, logger, { fetch });
+      await connect(client, logger);
+
+      await downloadBlob(client, 'blob-1');
+
+      expect(fetch.mock.calls[1][0]).toBe(
+        'https://jmap.example.com/download/account-123/blob-1/attachment?type=application%2Foctet-stream'
+      );
+    });
+
+    it('reports an HTTP refusal', async () => {
+      const fetch = scriptedFetch(json(validSession), new Response('', { status: 404, statusText: 'Not Found' }));
+      const client = createJmapClient(mockConfig, logger, { fetch });
+      await connect(client, logger);
+
+      await expect(downloadBlob(client, 'blob-1')).rejects.toMatchObject({ type: 'notFound', message: 'HTTP 404: Not Found' });
+    });
+
+    it('says when the server gives no download URL', async () => {
+      const fetch = scriptedFetch(json({ ...validSession, downloadUrl: '' }));
+      const client = createJmapClient(mockConfig, logger, { fetch });
+      await connect(client, logger);
+
+      await expect(downloadBlob(client, 'blob-1')).rejects.toMatchObject({ type: 'downloadUrlMissing' });
     });
   });
 });
 
-describe('JMAPClient OIDC auth', () => {
+describe('OIDC auth', () => {
+  const logger = testLogger();
   let mockTokenRefresher: {
     ensureValidToken: ReturnType<typeof vi.fn>;
-    isTokenValid: ReturnType<typeof vi.fn>;
-    clearCache: ReturnType<typeof vi.fn>;
+    forceRefresh: ReturnType<typeof vi.fn>;
   };
+  const tokens = (accessToken: string) => ({
+    accessToken,
+    refreshToken: 'refresh-token',
+    expiresAt: Math.floor(Date.now() / 1000) + 3600,
+  });
 
   beforeEach(() => {
-    fetchMocker.enableMocks();
-    fetchMocker.resetMocks();
     vi.clearAllMocks();
-
-    // Setup mock token refresher
-    mockTokenRefresher = {
-      ensureValidToken: vi.fn(),
-      isTokenValid: vi.fn(),
-      clearCache: vi.fn(),
-    };
-    mockCreateTokenRefresher.mockReturnValue(mockTokenRefresher as any);
+    mockTokenRefresher = { ensureValidToken: vi.fn(), forceRefresh: vi.fn() };
+    mockCreateTokenRefresher.mockReturnValue(mockTokenRefresher as never);
   });
 
-  afterEach(() => {
-    fetchMocker.disableMocks();
-  });
+  it('uses the stored token from TokenRefresher', async () => {
+    mockTokenRefresher.ensureValidToken.mockResolvedValue(tokens('oidc-access-token-123'));
+    const fetch = scriptedFetch(json(validSession));
 
-  it('should use stored token from TokenRefresher for OIDC auth', async () => {
-    mockTokenRefresher.ensureValidToken.mockResolvedValue({
-      accessToken: 'oidc-access-token-123',
-      refreshToken: 'oidc-refresh-token',
-      expiresAt: Math.floor(Date.now() / 1000) + 3600,
-    });
-    fetchMocker.mockResponseOnce(JSON.stringify(validSessionResponse));
+    await connect(createJmapClient(mockOidcConfig, logger, { fetch }), logger);
 
-    const client = new JMAPClient(mockOidcConfig, mockLogger);
-    await client.fetchSession();
-
-    // Verify TokenRefresher was created with correct params
-    expect(mockCreateTokenRefresher).toHaveBeenCalledWith(
-      'https://auth.example.com',
-      'test-client-id'
-    );
-
-    // Verify ensureValidToken was called
+    expect(mockCreateTokenRefresher).toHaveBeenCalledWith('https://auth.example.com', 'test-client-id');
     expect(mockTokenRefresher.ensureValidToken).toHaveBeenCalled();
-
-    // Verify Authorization header uses the stored token
-    const [, options] = fetchMocker.mock.calls[0];
-    expect(options?.headers?.['Authorization']).toBe('Bearer oidc-access-token-123');
+    expect(header(fetch.mock.calls[0][1], 'Authorization')).toBe('Bearer oidc-access-token-123');
   });
 
-  it('should propagate noStoredTokens error with re-auth instructions', async () => {
-    const noTokensError = new JMAPError(
-      'No stored tokens found',
-      'noStoredTokens',
-      'Run the auth command: npx mcp-twake-mail-auth'
+  it('propagates noStoredTokens with re-auth instructions', async () => {
+    mockTokenRefresher.ensureValidToken.mockRejectedValue(
+      new JMAPError('No stored tokens found', 'noStoredTokens', 'Run the auth command: npx mcp-twake-mail-auth')
     );
-    mockTokenRefresher.ensureValidToken.mockRejectedValue(noTokensError);
+    const fetch = scriptedFetch();
 
-    const client = new JMAPClient(mockOidcConfig, mockLogger);
-
-    try {
-      await client.fetchSession();
-      expect.fail('Expected JMAPError to be thrown');
-    } catch (error) {
-      expect(error).toBeInstanceOf(JMAPError);
-      expect((error as JMAPError).type).toBe('noStoredTokens');
-      expect((error as JMAPError).fix).toContain('auth command');
-    }
+    const error = await connect(createJmapClient(mockOidcConfig, logger, { fetch }), logger).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(JMAPError);
+    expect((error as JMAPError).type).toBe('noStoredTokens');
+    expect((error as JMAPError).fix).toContain('auth command');
+    expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('should propagate refreshFailed error with re-auth instructions', async () => {
-    const refreshFailedError = new JMAPError(
-      'Token refresh failed: invalid_grant',
-      'refreshFailed',
-      'Re-authenticate: npx mcp-twake-mail-auth'
+  it('propagates refreshFailed with re-auth instructions', async () => {
+    mockTokenRefresher.ensureValidToken.mockRejectedValue(
+      new JMAPError('Token refresh failed: invalid_grant', 'refreshFailed', 'Re-authenticate: npx mcp-twake-mail-auth')
     );
-    mockTokenRefresher.ensureValidToken.mockRejectedValue(refreshFailedError);
 
-    const client = new JMAPClient(mockOidcConfig, mockLogger);
-
-    try {
-      await client.fetchSession();
-      expect.fail('Expected JMAPError to be thrown');
-    } catch (error) {
-      expect(error).toBeInstanceOf(JMAPError);
-      expect((error as JMAPError).type).toBe('refreshFailed');
-      expect((error as JMAPError).fix).toContain('Re-authenticate');
-    }
+    const error = await connect(createJmapClient(mockOidcConfig, logger, { fetch: scriptedFetch() }), logger).catch(
+      (e: unknown) => e
+    );
+    expect((error as JMAPError).type).toBe('refreshFailed');
+    expect((error as JMAPError).fix).toContain('Re-authenticate');
   });
 
-  it('should use fresh token for each request via TokenRefresher', async () => {
-    // First call returns one token, second call returns a different token (simulating refresh)
+  it('asks TokenRefresher for a token before each request', async () => {
     mockTokenRefresher.ensureValidToken
-      .mockResolvedValueOnce({
-        accessToken: 'first-token',
-        refreshToken: 'refresh-token',
-        expiresAt: Math.floor(Date.now() / 1000) + 3600,
-      })
-      .mockResolvedValueOnce({
-        accessToken: 'refreshed-token',
-        refreshToken: 'refresh-token',
-        expiresAt: Math.floor(Date.now() / 1000) + 3600,
-      });
+      .mockResolvedValueOnce(tokens('first-token'))
+      .mockResolvedValueOnce(tokens('refreshed-token'));
+    const fetch = scriptedFetch(json(validSession), apiAnswer([['Email/get', { list: [], notFound: [], state: 's' }, 'c0']]));
+    const client = createJmapClient(mockOidcConfig, logger, { fetch });
 
-    fetchMocker.mockResponseOnce(JSON.stringify(validSessionResponse));
-    fetchMocker.mockResponseOnce(JSON.stringify({
-      methodResponses: [['Email/get', { list: [] }, 'c1']],
-    }));
+    await connect(client, logger);
+    await client.call('Email/get', { accountId: 'account-123' });
 
-    const client = new JMAPClient(mockOidcConfig, mockLogger);
-    await client.fetchSession();
-    await client.request([['Email/get', {}, 'c1']]);
-
-    // Verify ensureValidToken was called twice (once for session, once for request)
     expect(mockTokenRefresher.ensureValidToken).toHaveBeenCalledTimes(2);
-
-    // Check first call used first token
-    const [, sessionOptions] = fetchMocker.mock.calls[0];
-    expect(sessionOptions?.headers?.['Authorization']).toBe('Bearer first-token');
-
-    // Check second call used refreshed token
-    const [, requestOptions] = fetchMocker.mock.calls[1];
-    expect(requestOptions?.headers?.['Authorization']).toBe('Bearer refreshed-token');
+    expect(header(fetch.mock.calls[0][1], 'Authorization')).toBe('Bearer first-token');
+    expect(header(fetch.mock.calls[1][1], 'Authorization')).toBe('Bearer refreshed-token');
   });
 
-  it('should throw oidcConfigError when OIDC config is incomplete', async () => {
-    // Create config missing OIDC settings but with auth method set to oidc
-    const incompleteOidcConfig: Config = {
-      ...mockConfig,
-      JMAP_AUTH_METHOD: 'oidc',
-      // JMAP_OIDC_ISSUER and JMAP_OIDC_CLIENT_ID are missing
-    };
+  it('refreshes the token once when the server answers 401, then sends the request again', async () => {
+    mockTokenRefresher.ensureValidToken
+      .mockResolvedValueOnce(tokens('revoked-token'))
+      .mockResolvedValueOnce(tokens('new-token'));
+    mockTokenRefresher.forceRefresh.mockResolvedValue(true);
+    const fetch = scriptedFetch(new Response('', { status: 401, statusText: 'Unauthorized' }), json(validSession));
 
-    // Mock returns null since config is incomplete
-    mockCreateTokenRefresher.mockReturnValue(null as any);
+    const account = await connect(createJmapClient(mockOidcConfig, logger, { fetch }), logger);
 
-    const client = new JMAPClient(incompleteOidcConfig, mockLogger);
+    expect(account.accountId).toBe('account-123');
+    expect(mockTokenRefresher.forceRefresh).toHaveBeenCalledOnce();
+    expect(header(fetch.mock.calls[1][1], 'Authorization')).toBe('Bearer new-token');
+  });
 
-    try {
-      await client.fetchSession();
-      expect.fail('Expected JMAPError to be thrown');
-    } catch (error) {
-      expect(error).toBeInstanceOf(JMAPError);
-      expect((error as JMAPError).type).toBe('oidcConfigError');
-      expect((error as JMAPError).fix).toContain('OIDC_ISSUER');
-    }
+  it('reports the 401 when the token cannot be refreshed', async () => {
+    mockTokenRefresher.ensureValidToken.mockResolvedValue(tokens('revoked-token'));
+    mockTokenRefresher.forceRefresh.mockRejectedValue(new JMAPError('Token refresh failed', 'refreshFailed', 'x'));
+    const fetch = scriptedFetch(new Response('', { status: 401, statusText: 'Unauthorized' }));
+
+    await expect(connect(createJmapClient(mockOidcConfig, logger, { fetch }), logger)).rejects.toMatchObject({
+      type: 'unauthorized',
+    });
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it('throws oidcConfigError when OIDC config is incomplete', async () => {
+    const incomplete = testConfig({ JMAP_AUTH_METHOD: 'oidc' });
+
+    const error = await connect(createJmapClient(incomplete, logger, { fetch: scriptedFetch() }), logger).catch(
+      (e: unknown) => e
+    );
+    expect(error).toBeInstanceOf(JMAPError);
+    expect((error as JMAPError).type).toBe('oidcConfigError');
+    expect((error as JMAPError).fix).toContain('OIDC_ISSUER');
+    expect(mockCreateTokenRefresher).not.toHaveBeenCalled();
+  });
+});
+
+describe('command auth', () => {
+  const logger = testLogger();
+
+  it('runs the token command again once when the server answers 401', async () => {
+    const config = testConfig({
+      JMAP_AUTH_METHOD: 'command',
+      JMAP_TOKEN_COMMAND: `node -e "process.stdout.write('token-' + Date.now() + Math.random())"`,
+    });
+    const fetch = scriptedFetch(new Response('', { status: 401, statusText: 'Unauthorized' }), json(validSession));
+
+    await connect(createJmapClient(config, logger, { fetch }), logger);
+
+    const first = header(fetch.mock.calls[0][1], 'Authorization');
+    const second = header(fetch.mock.calls[1][1], 'Authorization');
+    expect(first).toMatch(/^Bearer token-/);
+    expect(second).toMatch(/^Bearer token-/);
+    expect(second).not.toBe(first);
+  });
+
+  it('throws commandConfigError without a command', async () => {
+    const config = testConfig({ JMAP_AUTH_METHOD: 'command' });
+
+    await expect(connect(createJmapClient(config, logger, { fetch: scriptedFetch() }), logger)).rejects.toMatchObject({
+      type: 'commandConfigError',
+    });
+  });
+});
+
+describe('errorText and toJMAPError', () => {
+  it('shows a method error by its description, else its type', () => {
+    const described = new JmapMethodError({ arguments: { type: 'notFound', description: 'No such e-mail' }, methodName: 'Email/get', callId: 'c0' });
+    const bare = new JmapMethodError({ arguments: { type: 'stateMismatch' }, methodName: 'Email/set', callId: 'c0' });
+    expect(errorText(described)).toBe('No such e-mail');
+    expect(errorText(bare)).toBe('stateMismatch');
+    expect(toJMAPError(bare)).toMatchObject({ type: 'stateMismatch', fix: expect.stringContaining('Refetch') });
+  });
+
+  it('shows an HTTP error as "HTTP status: text"', () => {
+    const error = new JmapHttpError({ status: 403, statusText: 'Forbidden', body: '', url: API_URL });
+    expect(errorText(error)).toBe('HTTP 403: Forbidden');
+    expect(toJMAPError(error)).toMatchObject({ type: 'forbidden' });
+  });
+
+  it('shows a request-level error with its detail', () => {
+    const error = new JmapRequestError({ type: 'urn:ietf:params:jmap:error:limit', status: 400, detail: 'Too many calls', limit: 'maxCallsInRequest' }, 400);
+    expect(errorText(error)).toBe('HTTP 400: Too many calls');
+  });
+
+  it('shows other errors by their message', () => {
+    expect(errorText(new Error('Network error'))).toBe('Network error');
+    expect(errorText('plain')).toBe('plain');
   });
 });
 

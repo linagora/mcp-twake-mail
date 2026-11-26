@@ -55,6 +55,7 @@
   },
   "dependencies": {
     "@inquirer/prompts": "^8.7.5",
+    "@linagora/jmap-client-ts": "2.0.0-alpha.0",
     "@modelcontextprotocol/sdk": "^1.25.3",
     "commander": "^15.0.0",
     "marked": "^18.1.3",

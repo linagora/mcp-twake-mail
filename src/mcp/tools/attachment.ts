@@ -8,7 +8,8 @@ import { randomUUID } from 'crypto';
 import { basename, extname, join } from 'path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
-import type { JMAPClient } from '../../jmap/client.js';
+import type { EmailBodyPart } from '@linagora/jmap-client-ts';
+import { downloadBlob, errorText, type JmapClient } from '../../jmap/client.js';
 import type { Logger } from '../../config/logger.js';
 import { approverFor } from '../approval.js';
 import { localFolder } from './files.js';
@@ -28,16 +29,9 @@ export interface AttachmentMetadata {
 }
 
 /**
- * JMAP body part structure from Email/get response.
+ * The body part properties get_attachments requests (bodyProperties).
  */
-interface JMAPBodyPart {
-  blobId: string;
-  name?: string | null;
-  type: string;
-  size: number;
-  disposition?: string | null;
-  cid?: string | null;
-}
+type JMAPBodyPart = Pick<EmailBodyPart, 'blobId' | 'name' | 'type' | 'size' | 'disposition' | 'cid'>;
 
 /**
  * Common annotations for read-only attachment tools.
@@ -109,7 +103,8 @@ export function isInlineAttachment(part: { cid?: string | null; disposition?: st
  */
 function transformAttachment(part: JMAPBodyPart): AttachmentMetadata {
   return {
-    blobId: part.blobId,
+    // an attachment is a leaf part: it always has a blob
+    blobId: part.blobId as string,
     name: part.name ?? null,
     type: part.type,
     size: part.size,
@@ -153,7 +148,7 @@ export interface AttachmentOptions {
  */
 export function registerAttachmentTools(
   server: McpServer,
-  jmapClient: JMAPClient,
+  jmapClient: JmapClient,
   logger: Logger,
   options: AttachmentOptions = {}
 ): void {
@@ -182,35 +177,28 @@ export function registerAttachmentTools(
       logger.debug({ emailId, excludeInline, mimeTypeFilter }, 'get_attachments called');
 
       try {
-        const session = jmapClient.getSession();
-        const response = await jmapClient.request([
-          [
-            'Email/get',
-            {
-              accountId: session.accountId,
-              ids: [emailId],
-              properties: ['attachments'],
-              bodyProperties: ['blobId', 'name', 'type', 'size', 'disposition', 'cid'],
-            },
-            'getAttachments',
-          ],
+        const [result] = await jmapClient.requestSettled((b) => [
+          b.call('Email/get', {
+            accountId: jmapClient.getPrimaryAccountId(),
+            ids: [emailId],
+            properties: ['attachments'],
+            bodyProperties: ['blobId', 'name', 'type', 'size', 'disposition', 'cid'],
+          }),
         ]);
-
-        const result = jmapClient.parseMethodResponse(response.methodResponses[0]);
-        if (!result.success) {
+        if (!result.ok) {
           logger.error({ error: result.error, emailId }, 'JMAP error in get_attachments');
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
-                text: `Failed to retrieve attachments: ${result.error?.description || result.error?.type || 'Unknown error'}`,
+                text: `Failed to retrieve attachments: ${errorText(result.error)}`,
               },
             ],
           };
         }
 
-        const emails = result.data?.list as Array<{ id: string; attachments?: JMAPBodyPart[] }>;
+        const emails: Array<{ id: string; attachments?: JMAPBodyPart[] }> = result.value.list;
         if (!emails || emails.length === 0) {
           return {
             isError: true,
@@ -263,7 +251,7 @@ export function registerAttachmentTools(
           content: [
             {
               type: 'text' as const,
-              text: `Error retrieving attachments: ${error instanceof Error ? error.message : String(error)}`,
+              text: `Error retrieving attachments: ${errorText(error)}`,
             },
           ],
         };
@@ -308,7 +296,7 @@ export function registerAttachmentTools(
         }
 
         // Download the blob
-        const data = await jmapClient.downloadBlob(blobId, filename, type);
+        const data = await downloadBlob(jmapClient, blobId, filename, type);
         const buffer = Buffer.from(data);
 
         logger.debug(
@@ -390,7 +378,7 @@ export function registerAttachmentTools(
           content: [
             {
               type: 'text' as const,
-              text: `Error downloading attachment: ${error instanceof Error ? error.message : String(error)}`,
+              text: `Error downloading attachment: ${errorText(error)}`,
             },
           ],
         };

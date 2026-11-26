@@ -389,6 +389,37 @@ describe('token-refresh', () => {
       });
     });
 
+    describe('forceRefresh', () => {
+      it('refreshes a token that has not expired', async () => {
+        const refresher = new TokenRefresher(issuerUrl, clientId);
+        const now = Math.floor(Date.now() / 1000);
+        await saveTokens({ accessToken: 'revoked-token', refreshToken: 'refresh-token', expiresAt: now + 3600 });
+        mockRefreshTokenGrant.mockResolvedValue({ access_token: 'new-access-token', expires_in: 3600 });
+
+        expect(await refresher.forceRefresh()).toBe(true);
+
+        expect(mockRefreshTokenGrant).toHaveBeenCalledTimes(1);
+        expect((await loadTokens())?.accessToken).toBe('new-access-token');
+        expect((await refresher.ensureValidToken()).accessToken).toBe('new-access-token');
+      });
+
+      it('returns false without a refresh token', async () => {
+        const refresher = new TokenRefresher(issuerUrl, clientId);
+        await saveTokens({ accessToken: 'revoked-token' });
+
+        expect(await refresher.forceRefresh()).toBe(false);
+        expect(mockRefreshTokenGrant).not.toHaveBeenCalled();
+      });
+
+      it('throws refreshFailed when the refresh fails', async () => {
+        const refresher = new TokenRefresher(issuerUrl, clientId);
+        await saveTokens({ accessToken: 'revoked-token', refreshToken: 'refresh-token' });
+        mockRefreshTokenGrant.mockRejectedValue(new Error('invalid_grant'));
+
+        await expect(refresher.forceRefresh()).rejects.toMatchObject({ type: 'refreshFailed' });
+      });
+    });
+
     describe('getIssuerConfig', () => {
       it('caches config after first call', async () => {
         const refresher = new TokenRefresher(issuerUrl, clientId);
